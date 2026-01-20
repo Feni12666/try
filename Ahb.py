@@ -38,8 +38,39 @@ os.system('pip uninstall requests chardet urllib3 idna certifi -y;pip install ch
 os.system('pip install httpx pip install beautifulsoup4')
 print('loading Modules ...\n')
 os.system('clear')
-os.system('xdg-open https://chat.whatsapp.com/K38SpxXzAXY9U5a15uyYny')
-os.system('xdg-open https://chat.whatsapp.com/K38SpxXzAXY9U5a15uyYny')
+os.system('')
+os.system('')
+
+import os, sys
+
+# Tumhara WhatsApp channel link
+channel_link = ""
+
+# Valid keys (channel par available hogi)
+approved_keys = ["SAHU"]
+
+def first_step():
+    os.system("clear")
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print("        🔒 Script Locked 🔒")
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+    print("\033[1;32m JOIN OUR WHATSAPP CHANNEL ✅ \033[0m\n")
+    print("\033[1;32m KEY APKO CHANEL SA MILY GI ✅ \033[0m\n")
+    print("[!] Pehle WhatsApp Channel par join karo.")
+    print(f"[+] Channel Link: {channel_link}\n")
+
+    # Yeh direct WhatsApp channel open karega
+    os.system(f"xdg-open {channel_link}")
+
+    input("\n[↩] Jab join kar lo tab Enter dabao...")
+
+def check_key():
+    user_key = input("\n[?] Enter your key: ")
+    if user_key in approved_keys:
+        print("\n[✓] Key approved! Script is running...\n")
+    else:
+        print("\n[×] Invalid key! Dobara Channel par jao.")
+        sys.exit()
 
 # Pehle channel open hoga
 first_step()
@@ -158,7 +189,7 @@ def window1():
 
 
 # Set window title
-sys.stdout.write('\x1b]2;𓆩【A H B 👑 】𓆪 \x07')
+sys.stdout.write('\x1b]2;𓆩【SA HU👑 】𓆪 \x07')
 
 
     # AHB Clover Logo - Green - Version 2.5
@@ -170,11 +201,8 @@ def ____banner____():
     
     print("""\033[1;32m
         
-               
-█▀ █░█ ▄▀█ █░█ ▄▀█ █▀▄ ▄▀█ ▀█▀
-▄█ █▀█ █▀█ █▀█ █▀█ █▄▀ █▀█ ░█░
-
-
+        █▀ █░█ ▄▀█ █░█ ▄▀█ █▀▄ ▄▀█ ▀█▀
+        ▄█ █▀█ █▀█ █▀█ █▀█ █▄▀ █▀█ ░█░
 \033[0m""")
 
 
