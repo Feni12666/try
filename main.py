@@ -1,20 +1,18 @@
 import asyncio
 import logging
 import os
-import re
 import time
 from collections import defaultdict, deque
 from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
 from urllib.parse import urlparse
-from typing import Any, Optional
+from typing import Optional
 
 import aiosqlite
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F, Router, types
 from aiogram.client.default import DefaultBotProperties
-from aiogram.dispatcher.error import ErrorEvent
 from aiogram.enums import ParseMode
 from aiogram.exceptions import (
     TelegramBadRequest,
@@ -34,6 +32,7 @@ from aiogram.types import (
     InlineQueryResultArticle,
     InputTextMessageContent,
     Message,
+    Update,
 )
 
 # ==================== CONFIG ====================
@@ -48,11 +47,11 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 WEBHOOK_MODE = os.getenv("WEBHOOK_MODE", "false").lower() == "true"
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").strip()
 WEBHOOK_HOST = os.getenv("WEBHOOK_HOST", "0.0.0.0")
-WEBHOOK_PORT = int(os.getenv("WEBHOOK_PORT", "8443"))
+WEBHOOK_PORT = int(os.getenv("PORT", os.getenv("WEBHOOK_PORT", "8443")))
 WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "/webhook").strip()
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "").strip()
 HEALTH_HOST = os.getenv("HEALTH_HOST", "0.0.0.0")
-HEALTH_PORT = int(os.getenv("HEALTH_PORT", "8000"))
+HEALTH_PORT = int(os.getenv("PORT", os.getenv("HEALTH_PORT", "8000")))
 BROADCAST_CONCURRENCY = int(os.getenv("BROADCAST_CONCURRENCY", "20"))
 
 # ==================== LOGGING ====================
@@ -98,7 +97,7 @@ HELP_TEXT = """
 নিচের বাটন ব্যবহার করে সরাসরি গ্রুপে জয়েন করতে পারবেন।
 """.strip()
 
-ADMIN_PANEL_TEXT = "🔧 <b>Admin Panel</b>\n\nনিচের বাটন থেকে কাজ নির্বাচন করুন।"
+ADMIN_PANEL_TEXT = "🔧 <b>Admin Panel</b>\n\nনিচের বাটন থেকে কাজ নির্বাচন করুন。"
 
 # ==================== STATES ====================
 class AdminState(StatesGroup):
@@ -1335,8 +1334,8 @@ async def show_uptime(message: Message):
 
 # ==================== ERROR HANDLER ====================
 @router.errors()
-async def error_handler(event: ErrorEvent):
-    logger.error("Update %s caused exception: %s", event.update, event.exception, exc_info=True)
+async def error_handler(update: Update, exception: Exception):
+    logger.error("Update %s caused exception: %s", update, exception, exc_info=True)
     return True
 
 # ==================== HTTP SERVER ====================
