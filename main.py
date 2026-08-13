@@ -21,7 +21,7 @@ from aiogram.types import (
 # CONFIG
 # =========================================================
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+BOT_TOKEN = os.getenv("8900741068:AAF2dWLL6-3xvVyso5sw42GCbKEuJkPmuYQ", "").strip()
 
 OFFICIAL_GROUP = os.getenv(
     "OFFICIAL_GROUP",
