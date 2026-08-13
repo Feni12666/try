@@ -1,1 +1,4 @@
-aiogram==3.13.1
+pydantic-core==2.23.4
+Python 3.14
+maturin failed
+Read-only file system
