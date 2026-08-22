@@ -37,8 +37,8 @@ from aiogram.types import (
 
 # ==================== CONFIG ====================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-OFFICIAL_GROUP = os.getenv("OFFICIAL_GROUP", "https://t.me/+Q9q5Fijwa8BiZGY0").strip()
-BABY_VIDEO_GROUP = os.getenv("BABY_VIDEO_GROUP", "https://t.me/+rwfWJC3jRMNhYThk").strip()
+OFFICIAL_GROUP = os.getenv("OFFICIAL_GROUP", "https://t.me/+FmHy4zqE9CI1YmU0").strip()
+backup channel = os.getenv("backup channel", "https://t.me/+ItlwA-0u__4xNTA0").strip()
 ADMIN_IDS_ENV = set(map(int, os.getenv("ADMIN_IDS", "").split(","))) if os.getenv("ADMIN_IDS") else set()
 RATE_LIMIT_COUNT = int(os.getenv("RATE_LIMIT_COUNT", "6"))
 RATE_LIMIT_WINDOW = int(os.getenv("RATE_LIMIT_WINDOW", "10"))
