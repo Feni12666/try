@@ -1,0 +1,39 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.nagram.usbbridge'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.nagram.usbbridge'
+        minSdk 26
+        targetSdk 35
+        versionCode 13
+        versionName '3.0.1-premium-mobile-safe'
+    }
+
+    buildFeatures {
+        aidl true
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    def shizuku_version = '13.1.5'
+    implementation "dev.rikka.shizuku:api:$shizuku_version"
+    implementation "dev.rikka.shizuku:provider:$shizuku_version"
+    implementation "androidx.annotation:annotation:1.8.2"
+}
