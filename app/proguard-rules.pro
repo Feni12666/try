@@ -1,0 +1,3 @@
+-keep class com.nagram.usbbridge.NagramPrivilegedService { *; }
+-keep class com.nagram.usbbridge.INagramFileService { *; }
+-keep class com.nagram.usbbridge.INagramFileService$Stub { *; }
