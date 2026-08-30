@@ -8,5 +8,6 @@ interface INagramFileService {
     long getLastModified(String path) = 2;
     ParcelFileDescriptor openRead(String path) = 3;
     boolean deleteIfUnchanged(String path, long expectedSize, long expectedModified) = 4;
+    boolean isSourceLayoutAvailable() = 5;
     void destroy() = 16777114;
 }

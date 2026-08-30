@@ -7,7 +7,6 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.ComponentName;
 import android.content.ContentResolver;
-import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.content.SharedPreferences;
@@ -25,6 +24,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
@@ -39,10 +39,14 @@ public class BridgeService extends Service {
     private static final String TAG = "NagramUSBBridge";
     private static final String CHANNEL = "nagram_usb_bridge";
     private static final int NOTIFY_ID = 4102;
-    private static final long SCAN_MS = 3000L;
     private static final int STABLE_PASSES = 3;
+    private static final long SCAN_SECONDS = 5L;
+    private static final long FAT32_MAX_FILE = 0xFFFFFFFFL;
+    private static final long DEFAULT_RESERVE = 1024L * 1024L * 1024L;
+    private static final long DEFAULT_CLEANUP_DELAY = 5L * 60L * 1000L;
 
     private SharedPreferences prefs;
+    private BridgeDatabase db;
     private ScheduledExecutorService scanner;
     private ExecutorService transferExecutor;
     private final AtomicBoolean transferBusy = new AtomicBoolean(false);
@@ -56,80 +60,102 @@ public class BridgeService extends Service {
         long size;
         long mtime;
         int same;
-        Seen(long size, long mtime) { this.size = size; this.mtime = mtime; this.same = 0; }
+        Seen(long size, long mtime) { this.size = size; this.mtime = mtime; }
     }
 
     private final Shizuku.UserServiceArgs userArgs = new Shizuku.UserServiceArgs(
             new ComponentName("com.nagram.usbbridge", "com.nagram.usbbridge.NagramPrivilegedService"))
             .daemon(false)
             .tag("nagram_usb_file_service")
-            .version(1)
+            .version(2)
             .processNameSuffix("nagram_files");
 
     private final ServiceConnection connection = new ServiceConnection() {
         @Override
         public void onServiceConnected(ComponentName name, IBinder service) {
             remote = INagramFileService.Stub.asInterface(service);
-            setStatus("Shizuku file service connected");
+            setStatus("Bridge ready — Shizuku connected");
         }
 
         @Override
         public void onServiceDisconnected(ComponentName name) {
             remote = null;
-            setStatus("Shizuku file service disconnected");
+            setStatus("Waiting for Shizuku — originals are safe");
         }
     };
 
     private final Shizuku.OnBinderReceivedListener binderReceived = this::bindRemoteIfPossible;
     private final Shizuku.OnBinderDeadListener binderDead = () -> {
         remote = null;
-        setStatus("Shizuku stopped — waiting");
+        setStatus("Shizuku stopped — waiting, originals are safe");
+        updateNotification("Waiting for Shizuku");
     };
 
     @Override
     public void onCreate() {
         super.onCreate();
         prefs = getSharedPreferences("bridge", MODE_PRIVATE);
+        db = new BridgeDatabase(this);
         serviceStartMs = System.currentTimeMillis();
         prefs.edit().putBoolean("running", true).apply();
-
         createNotificationChannel();
-        Notification n = buildNotification("Waiting for Shizuku…");
+
+        Notification n = buildNotification("Starting safety engine…");
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(NOTIFY_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
         } else {
             startForeground(NOTIFY_ID, n);
         }
 
+        recoverJournal();
         Shizuku.addBinderReceivedListenerSticky(binderReceived);
         Shizuku.addBinderDeadListener(binderDead);
         bindRemoteIfPossible();
 
         scanner = Executors.newSingleThreadScheduledExecutor();
         transferExecutor = Executors.newSingleThreadExecutor();
-        scanner.scheduleWithFixedDelay(this::scanSafely, 1, 3, TimeUnit.SECONDS);
+        scanner.scheduleWithFixedDelay(this::scanSafely, 1, SCAN_SECONDS, TimeUnit.SECONDS);
+    }
+
+    private void recoverJournal() {
+        try {
+            ContentResolver resolver = getContentResolver();
+            for (BridgeDatabase.Record r : db.recoverable()) {
+                if (r.destUri != null && r.destName != null && r.destName.endsWith(".part")) {
+                    try { DocumentsContract.deleteDocument(resolver, Uri.parse(r.destUri)); } catch (Throwable ignored) {}
+                }
+                db.updateStatus(r.id, "RETRY_PENDING", "Recovered after interruption; source preserved");
+            }
+        } catch (Throwable t) {
+            prefs.edit().putBoolean("cleanup_suspended", true).apply();
+            Log.e(TAG, "journal recovery", t);
+        }
     }
 
     private void bindRemoteIfPossible() {
         try {
-            if (!Shizuku.pingBinder()) return;
+            if (!Shizuku.pingBinder()) {
+                setStatus("Waiting for Shizuku — originals are safe");
+                return;
+            }
             if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
-                setStatus("Shizuku permission missing — open app");
+                setStatus("Shizuku permission needed — originals are safe");
                 return;
             }
             Shizuku.bindUserService(userArgs, connection);
         } catch (Throwable t) {
             Log.e(TAG, "bindRemote", t);
-            setStatus("Shizuku bind failed: " + shortMessage(t));
+            setStatus("Shizuku connection failed — source kept: " + shortMessage(t));
         }
     }
 
     private void scanSafely() {
         try {
+            processCleanupDue();
             scanOnce();
         } catch (Throwable t) {
             Log.e(TAG, "scan", t);
-            setStatus("Scan error: " + shortMessage(t));
+            setStatus("Scan paused safely: " + shortMessage(t));
         }
     }
 
@@ -137,9 +163,15 @@ public class BridgeService extends Service {
         INagramFileService r = remote;
         if (r == null || transferBusy.get()) return;
 
+        if (!r.isSourceLayoutAvailable()) {
+            prefs.edit().putBoolean("cleanup_suspended", true).apply();
+            setStatus("Nagram storage layout changed/missing — automation paused safely");
+            return;
+        }
+
         String treeText = prefs.getString("tree_uri", null);
         if (treeText == null) {
-            setStatus("Select USB folder in app");
+            setStatus("Select your USB destination folder");
             return;
         }
 
@@ -155,15 +187,11 @@ public class BridgeService extends Service {
             long size = r.getFileSize(path);
             long mtime = r.getLastModified(path);
             if (size <= 0 || mtime <= 0) continue;
+            if (db.isKnownHandled(path, size, mtime)) continue;
 
-            // By default, don't touch files that were already completed before the bridge was started.
-            // Keep their initial signature ignored. If such a file changes after Start (for example it was
-            // still downloading), remove it from the ignore set and begin normal stability tracking.
             Seen ignored = ignoredInitial.get(path);
             if (ignored != null) {
-                if (ignored.size == size && ignored.mtime == mtime) {
-                    continue;
-                }
+                if (ignored.size == size && ignored.mtime == mtime) continue;
                 ignoredInitial.remove(path);
                 seen.put(path, new Seen(size, mtime));
                 continue;
@@ -179,14 +207,14 @@ public class BridgeService extends Service {
                 continue;
             }
 
-            if (s.size == size && s.mtime == mtime) {
-                s.same++;
-            } else {
+            if (s.size == size && s.mtime == mtime) s.same++;
+            else {
                 s.size = size;
                 s.mtime = mtime;
                 s.same = 0;
             }
 
+            // Download Completion Guard: 3 unchanged observations, 5 seconds apart.
             if (s.same >= STABLE_PASSES) {
                 final long expectedSize = size;
                 final long expectedMtime = mtime;
@@ -195,6 +223,7 @@ public class BridgeService extends Service {
                         try {
                             transferOne(path, expectedSize, expectedMtime, Uri.parse(treeText));
                         } finally {
+                            clearProgress();
                             transferBusy.set(false);
                         }
                     });
@@ -205,82 +234,326 @@ public class BridgeService extends Service {
 
         seen.keySet().retainAll(now);
         ignoredInitial.keySet().retainAll(now);
+        if (!transferBusy.get()) setIdleStatus(files.length);
+    }
+
+    private void setIdleStatus(int discovered) {
+        if (prefs.getBoolean("cleanup_suspended", false)) {
+            setStatus("Safer Mode active — automatic cleanup suspended");
+        } else {
+            setStatus(discovered == 0 ? "All caught up ✓" : "Watching Nagram — waiting for completed files");
+        }
     }
 
     private void transferOne(String path, long expectedSize, long expectedMtime, Uri treeUri) {
         INagramFileService r = remote;
         if (r == null) return;
 
-        String name = new File(path).getName();
-        setStatus("Copying: " + name);
-        updateNotification("Copying: " + name);
-
+        final String name = new File(path).getName();
+        final String treeText = treeUri.toString();
+        long jobId = db.upsertSource(path, name, expectedSize, expectedMtime, "PREFLIGHT");
         ContentResolver resolver = getContentResolver();
         Uri rootDoc = DocumentTreeUtils.rootDocumentUri(treeUri);
-        Uri outDoc = null;
-        long copied = 0L;
+        Uri tempDoc = null;
 
         try {
-            long beforeSize = r.getFileSize(path);
-            long beforeMtime = r.getLastModified(path);
-            if (beforeSize != expectedSize || beforeMtime != expectedMtime) {
-                setStatus("File changed; waiting: " + name);
+            // Source Mutation Guard — recheck immediately before any destination write.
+            if (!sourceUnchanged(r, path, expectedSize, expectedMtime)) {
+                db.updateStatus(jobId, "WAITING_FOR_COMPLETION", "Source changed before transfer");
+                setStatus("Waiting for download to finish: " + name);
+                seen.remove(path);
                 return;
             }
 
-            String outName = DocumentTreeUtils.uniqueName(resolver, treeUri, rootDoc, name);
-            outDoc = DocumentsContract.createDocument(resolver, rootDoc, DocumentTreeUtils.mimeFor(outName), outName);
-            if (outDoc == null) throw new IllegalStateException("USB file could not be created");
+            long reserve = prefs.getLong("reserve_bytes", DEFAULT_RESERVE);
+            long available = StorageUtils.availableBytes(this, treeUri);
+            if (available >= 0 && available < expectedSize + reserve) {
+                long need = expectedSize + reserve - available;
+                db.updateStatus(jobId, "WAITING_FOR_SPACE", "Need " + human(need) + " more usable USB space");
+                setStatus("USB needs " + human(need) + " more usable space");
+                updateNotification("USB space needed: " + human(need));
+                return;
+            }
 
-            ParcelFileDescriptor pfd = r.openRead(path);
-            if (pfd == null) throw new IllegalStateException("Source could not be opened");
+            String fs = StorageUtils.filesystemTypeBestEffort(this, treeUri);
+            if (expectedSize > FAT32_MAX_FILE && StorageUtils.definitelyFat32(fs)) {
+                db.updateStatus(jobId, "DESTINATION_INCOMPATIBLE", "FAT32 cannot store this file size");
+                setStatus("USB format cannot store this " + human(expectedSize) + " file — original kept");
+                updateNotification("Large file not supported by this USB format");
+                return;
+            }
 
-            try (InputStream in = new ParcelFileDescriptor.AutoCloseInputStream(pfd);
-                 OutputStream out = resolver.openOutputStream(outDoc, "w")) {
+            db.update(jobId, "PREFLIGHT", treeText, null, null, null, null, 0L, null);
+
+            String quickFp = null;
+            if (prefs.getBoolean("duplicate_guard", true)) {
+                quickFp = FingerprintUtils.quick(r.openRead(path), expectedSize);
+                BridgeDatabase.Record dup = findConfirmedDuplicate(r, path, expectedSize, quickFp, treeUri, rootDoc);
+                if (dup != null) {
+                    long delay = prefs.getLong("cleanup_delay_ms", DEFAULT_CLEANUP_DELAY);
+                    boolean deleteAfter = prefs.getBoolean("delete_after_verified", true);
+                    if (deleteAfter) {
+                        db.update(jobId, "CLEANUP_PENDING", treeText, dup.destUri, dup.destName,
+                                quickFp, dup.fullHash, System.currentTimeMillis() + delay, "Confirmed same content; copy skipped");
+                        setStatus("Duplicate skipped ✓  " + name + " — cleanup pending");
+                    } else {
+                        db.update(jobId, "COMPLETED_SOURCE_KEPT", treeText, dup.destUri, dup.destName,
+                                quickFp, dup.fullHash, 0L, "Confirmed same content; source kept by policy");
+                        completedThisRun.add(path);
+                        setStatus("Duplicate skipped ✓  " + name + " — source kept");
+                    }
+                    updateNotification("Duplicate skipped — same video already on USB");
+                    seen.remove(path);
+                    return;
+                }
+            }
+
+            String tempName = DocumentTreeUtils.safeTempName(name);
+            tempDoc = DocumentsContract.createDocument(resolver, rootDoc, "application/octet-stream", tempName);
+            if (tempDoc == null) throw new IllegalStateException("USB temporary file could not be created");
+            db.update(jobId, "TRANSFERRING", treeText, tempDoc.toString(), tempName, quickFp, null, 0L, null);
+
+            long copied = 0L;
+            long started = System.currentTimeMillis();
+            long lastUi = 0L;
+            ParcelFileDescriptor sourcePfd = r.openRead(path);
+            if (sourcePfd == null) throw new IllegalStateException("Source could not be opened");
+
+            try (InputStream in = new ParcelFileDescriptor.AutoCloseInputStream(sourcePfd);
+                 OutputStream out = resolver.openOutputStream(tempDoc, "w")) {
                 if (out == null) throw new IllegalStateException("USB output stream unavailable");
                 byte[] buf = new byte[1024 * 1024];
                 int n;
                 while ((n = in.read(buf)) != -1) {
                     out.write(buf, 0, n);
                     copied += n;
+                    long now = System.currentTimeMillis();
+                    if (now - lastUi >= 1000L) {
+                        updateProgress(name, copied, expectedSize, now - started);
+                        lastUi = now;
+                    }
                 }
                 out.flush();
             }
 
-            long afterSize = r.getFileSize(path);
-            long afterMtime = r.getLastModified(path);
-            if (copied != expectedSize || afterSize != expectedSize || afterMtime != expectedMtime) {
-                try { DocumentsContract.deleteDocument(resolver, outDoc); } catch (Throwable ignored) {}
-                setStatus("Source changed during copy; will retry: " + name);
+            db.updateStatus(jobId, "VERIFYING", null);
+            if (!sourceUnchanged(r, path, expectedSize, expectedMtime)) {
+                safeDeleteDocument(resolver, tempDoc);
+                db.updateStatus(jobId, "WAITING_FOR_COMPLETION", "Source changed during copy");
+                setStatus("Source changed during copy — retrying later, original kept");
+                seen.remove(path);
                 return;
             }
 
-            boolean deleted = r.deleteIfUnchanged(path, expectedSize, expectedMtime);
-            completedThisRun.add(path);
-            seen.remove(path);
-
-            if (deleted) {
-                setStatus("Moved ✅  " + name + "  (" + human(expectedSize) + ")");
-                updateNotification("Moved: " + name);
-            } else {
-                setStatus("Copied ✅ but source was not deleted: " + name);
-                updateNotification("Copied; source kept: " + name);
+            long destSize = DocumentTreeUtils.getSize(resolver, tempDoc);
+            if (copied != expectedSize || destSize != expectedSize || !DocumentTreeUtils.readable(resolver, tempDoc)) {
+                safeDeleteDocument(resolver, tempDoc);
+                onSafetyFailure(jobId, "VERIFICATION_FAILED", "Destination verification failed");
+                setStatus("Verification failed — original kept: " + name);
+                updateNotification("Verification failed — original kept");
+                return;
             }
+
+            db.updateStatus(jobId, "FINALIZING", null);
+            String finalName = DocumentTreeUtils.uniqueName(resolver, treeUri, rootDoc, name);
+            Uri finalDoc = DocumentTreeUtils.rename(resolver, tempDoc, finalName);
+            if (finalDoc == null) {
+                // Do not present the temporary object as a successful transfer if finalization is unsupported.
+                // Remove our own incomplete artifact where possible; the source remains untouched.
+                safeDeleteDocument(resolver, tempDoc);
+                tempDoc = null;
+                onSafetyFailure(jobId, "NEEDS_ATTENTION", "USB provider could not safely finalize the temporary file");
+                setStatus("USB could not finalize transfer safely — original kept");
+                updateNotification("Transfer needs attention — original kept");
+                return;
+            }
+            tempDoc = null;
+
+            long finalSize = DocumentTreeUtils.getSize(resolver, finalDoc);
+            if (finalSize != expectedSize || !DocumentTreeUtils.readable(resolver, finalDoc)) {
+                onSafetyFailure(jobId, "VERIFICATION_FAILED", "Final destination recheck failed");
+                setStatus("Final verification failed — original kept");
+                return;
+            }
+
+            long delay = prefs.getLong("cleanup_delay_ms", DEFAULT_CLEANUP_DELAY);
+            boolean deleteAfter = prefs.getBoolean("delete_after_verified", true);
+            if (deleteAfter && !prefs.getBoolean("cleanup_suspended", false)) {
+                db.update(jobId, "CLEANUP_PENDING", treeText, finalDoc.toString(), finalName,
+                        quickFp, null, System.currentTimeMillis() + delay, null);
+                setStatus("Verified ✓  " + name + " — cleanup in " + humanTime(delay));
+                updateNotification("Verified — safe cleanup pending");
+            } else {
+                db.update(jobId, "COMPLETED_SOURCE_KEPT", treeText, finalDoc.toString(), finalName,
+                        quickFp, null, 0L, prefs.getBoolean("cleanup_suspended", false) ? "Cleanup suspended by safety engine" : null);
+                completedThisRun.add(path);
+                setStatus("Copied + verified ✓  Source kept: " + name);
+                updateNotification("Copied + verified — source kept");
+            }
+            seen.remove(path);
+            resetFailureCounterGradually();
         } catch (Throwable t) {
             Log.e(TAG, "transfer " + path, t);
-            if (outDoc != null) {
-                try { DocumentsContract.deleteDocument(resolver, outDoc); } catch (Throwable ignored) {}
-            }
-            setStatus("Transfer failed; source kept: " + name + " — " + shortMessage(t));
-            updateNotification("Transfer failed; source kept");
+            if (tempDoc != null) safeDeleteDocument(resolver, tempDoc);
+            onSafetyFailure(jobId, "NEEDS_ATTENTION", shortMessage(t));
+            setStatus("Transfer failed safely — original kept: " + name + " — " + shortMessage(t));
+            updateNotification("Transfer failed — original kept");
         }
+    }
+
+    /**
+     * Same Video Duplicate Guard.
+     * Exact byte size narrows candidates, sample SHA-256 is a fast fingerprint, and full SHA-256 confirms
+     * content before copy is skipped. Filename is deliberately not part of the decision.
+     */
+    private BridgeDatabase.Record findConfirmedDuplicate(INagramFileService r, String sourcePath, long size,
+                                                          String quickFp, Uri treeUri, Uri rootDoc) throws Exception {
+        if (quickFp == null) return null;
+        ContentResolver resolver = getContentResolver();
+
+        // Fast path: previously transferred destination recorded in the persistent journal.
+        for (BridgeDatabase.Record old : db.fingerprintCandidates(size, quickFp, treeUri.toString())) {
+            if (old.destUri == null) continue;
+            Uri u = Uri.parse(old.destUri);
+            if (DocumentTreeUtils.getSize(resolver, u) != size || !DocumentTreeUtils.readable(resolver, u)) continue;
+            String sourceHash = FingerprintUtils.sha256(r.openRead(sourcePath));
+            String destHash = old.fullHash != null ? old.fullHash : FingerprintUtils.sha256Uri(resolver, u);
+            if (sourceHash != null && sourceHash.equals(destHash)) {
+                old.fullHash = destHash;
+                return old;
+            }
+        }
+
+        // Cold-start path: inspect same-size files already present in the selected USB folder.
+        for (DocumentTreeUtils.Child child : DocumentTreeUtils.childrenWithSize(resolver, treeUri, rootDoc, size, 30)) {
+            if (child.name != null && child.name.endsWith(".part")) continue;
+            String usbQuick;
+            try { usbQuick = FingerprintUtils.quickUri(resolver, child.uri, size); }
+            catch (Throwable ignored) { continue; }
+            if (!quickFp.equals(usbQuick)) continue;
+            String sourceHash = FingerprintUtils.sha256(r.openRead(sourcePath));
+            String destHash = FingerprintUtils.sha256Uri(resolver, child.uri);
+            if (sourceHash != null && sourceHash.equals(destHash)) {
+                BridgeDatabase.Record synthetic = new BridgeDatabase.Record();
+                synthetic.destUri = child.uri.toString();
+                synthetic.destName = child.name;
+                synthetic.fullHash = destHash;
+                return synthetic;
+            }
+        }
+        return null;
+    }
+
+    private void processCleanupDue() {
+        INagramFileService r = remote;
+        if (r == null || db == null) return;
+        if (!prefs.getBoolean("delete_after_verified", true)) return;
+        if (prefs.getBoolean("cleanup_suspended", false)) return;
+
+        List<BridgeDatabase.Record> due = db.dueCleanup(System.currentTimeMillis());
+        if (due.isEmpty()) return;
+        ContentResolver resolver = getContentResolver();
+        String selectedTree = prefs.getString("tree_uri", null);
+
+        for (BridgeDatabase.Record rec : due) {
+            try {
+                // Cleanup Revalidation: the exact verified destination must still be reachable now.
+                if (selectedTree == null || rec.treeUri == null || !selectedTree.equals(rec.treeUri)) {
+                    setStatus("Cleanup waiting for the verified USB — original kept");
+                    continue;
+                }
+                if (rec.destUri == null) {
+                    db.updateStatus(rec.id, "NEEDS_ATTENTION", "Verified destination reference missing");
+                    continue;
+                }
+                Uri dest = Uri.parse(rec.destUri);
+                long destSize = DocumentTreeUtils.getSize(resolver, dest);
+                if (destSize != rec.sourceSize || !DocumentTreeUtils.readable(resolver, dest)) {
+                    setStatus("Cleanup waiting — verified USB copy is not currently available");
+                    continue;
+                }
+                if (!sourceUnchanged(r, rec.sourcePath, rec.sourceSize, rec.sourceMtime)) {
+                    db.updateStatus(rec.id, "NEEDS_ATTENTION", "Source changed before cleanup; source preserved");
+                    continue;
+                }
+                boolean deleted = r.deleteIfUnchanged(rec.sourcePath, rec.sourceSize, rec.sourceMtime);
+                if (deleted) {
+                    db.updateStatus(rec.id, "COMPLETED", null);
+                    completedThisRun.add(rec.sourcePath);
+                    setStatus("Moved safely ✓  " + rec.sourceName + "  (" + human(rec.sourceSize) + ")");
+                    updateNotification("Safe move completed");
+                } else {
+                    db.updateStatus(rec.id, "NEEDS_ATTENTION", "Source cleanup refused because source no longer matched");
+                    setStatus("USB copy safe, but original was kept because cleanup could not be proven safe");
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "cleanup revalidation", t);
+                // Keep CLEANUP_PENDING so correct USB/recovered permission can be retried later.
+                setStatus("Cleanup waiting safely — original kept");
+            }
+        }
+    }
+
+    private boolean sourceUnchanged(INagramFileService r, String path, long size, long mtime) {
+        try {
+            return r.getFileSize(path) == size && r.getLastModified(path) == mtime;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private void onSafetyFailure(long jobId, String state, String message) {
+        db.updateStatus(jobId, state, message);
+        int failures = prefs.getInt("recent_safety_failures", 0) + 1;
+        SharedPreferences.Editor e = prefs.edit().putInt("recent_safety_failures", failures);
+        if (failures >= 3) e.putBoolean("cleanup_suspended", true);
+        e.apply();
+    }
+
+    private void resetFailureCounterGradually() {
+        int failures = prefs.getInt("recent_safety_failures", 0);
+        if (failures > 0) prefs.edit().putInt("recent_safety_failures", failures - 1).apply();
+    }
+
+    private void safeDeleteDocument(ContentResolver resolver, Uri uri) {
+        if (uri == null) return;
+        try { DocumentsContract.deleteDocument(resolver, uri); } catch (Throwable ignored) {}
+    }
+
+    private void updateProgress(String name, long copied, long total, long elapsedMs) {
+        int pct = total <= 0 ? 0 : (int) Math.min(100L, copied * 100L / total);
+        double seconds = Math.max(0.1, elapsedMs / 1000.0);
+        long bps = (long) (copied / seconds);
+        long remain = bps > 0 ? Math.max(0L, (total - copied) / bps) : -1L;
+        prefs.edit()
+                .putString("current_name", name)
+                .putLong("current_done", copied)
+                .putLong("current_total", total)
+                .putInt("current_percent", pct)
+                .putLong("current_speed", bps)
+                .putLong("current_eta", remain)
+                .apply();
+        String text = "Moving " + pct + "% • " + humanRate(bps);
+        updateNotification(text);
+        setStatus(text + " • " + name);
+    }
+
+    private void clearProgress() {
+        prefs.edit()
+                .remove("current_name")
+                .remove("current_done")
+                .remove("current_total")
+                .remove("current_percent")
+                .remove("current_speed")
+                .remove("current_eta")
+                .apply();
     }
 
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= 26) {
             NotificationManager nm = getSystemService(NotificationManager.class);
             NotificationChannel ch = new NotificationChannel(CHANNEL, "Nagram USB Bridge", NotificationManager.IMPORTANCE_LOW);
-            ch.setDescription("Shows Nagram to USB automatic transfer status");
+            ch.setDescription("Safe Nagram to USB transfer status");
             nm.createNotificationChannel(ch);
         }
     }
@@ -294,7 +567,7 @@ public class BridgeService extends Service {
                 : new Notification.Builder(this);
         return b.setContentTitle("Nagram USB Bridge")
                 .setContentText(text)
-                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setSmallIcon(android.R.drawable.stat_sys_upload_done)
                 .setOngoing(true)
                 .setContentIntent(pi)
                 .build();
@@ -302,27 +575,38 @@ public class BridgeService extends Service {
 
     private void updateNotification(String text) {
         NotificationManager nm = getSystemService(NotificationManager.class);
-        nm.notify(NOTIFY_ID, buildNotification(text));
+        if (nm != null) nm.notify(NOTIFY_ID, buildNotification(text));
     }
 
     private void setStatus(String text) {
-        prefs.edit().putString("last_status", text).apply();
+        prefs.edit().putString("last_status", text).putLong("last_status_at", System.currentTimeMillis()).apply();
     }
 
     private static String shortMessage(Throwable t) {
         String m = t.getMessage();
         if (m == null || m.trim().isEmpty()) m = t.getClass().getSimpleName();
-        if (m.length() > 120) m = m.substring(0, 120);
+        if (m.length() > 140) m = m.substring(0, 140);
         return m;
     }
 
-    private static String human(long b) {
+    static String human(long b) {
         if (b < 1024) return b + " B";
         double kb = b / 1024.0;
-        if (kb < 1024) return String.format("%.1f KB", kb);
+        if (kb < 1024) return String.format(java.util.Locale.US, "%.1f KB", kb);
         double mb = kb / 1024.0;
-        if (mb < 1024) return String.format("%.1f MB", mb);
-        return String.format("%.2f GB", mb / 1024.0);
+        if (mb < 1024) return String.format(java.util.Locale.US, "%.1f MB", mb);
+        return String.format(java.util.Locale.US, "%.2f GB", mb / 1024.0);
+    }
+
+    static String humanRate(long bps) {
+        return human(Math.max(0L, bps)) + "/s";
+    }
+
+    private static String humanTime(long ms) {
+        long min = Math.max(0L, ms / 60000L);
+        if (min < 1) return "a moment";
+        if (min == 1) return "1 minute";
+        return min + " minutes";
     }
 
     @Override
@@ -339,6 +623,7 @@ public class BridgeService extends Service {
         if (scanner != null) scanner.shutdownNow();
         if (transferExecutor != null) transferExecutor.shutdownNow();
         remote = null;
+        if (db != null) db.close();
         super.onDestroy();
     }
 
