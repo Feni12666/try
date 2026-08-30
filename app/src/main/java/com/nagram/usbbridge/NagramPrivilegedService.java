@@ -72,11 +72,17 @@ public class NagramPrivilegedService extends INagramFileService.Stub {
     }
 
     @Override
-    public ParcelFileDescriptor openRead(String path) throws FileNotFoundException {
+    public ParcelFileDescriptor openRead(String path) {
         if (!isAllowed(path)) throw new SecurityException("Path not allowed");
+
         File f = new File(path);
-        if (!f.isFile()) throw new FileNotFoundException(path);
-        return ParcelFileDescriptor.open(f, ParcelFileDescriptor.MODE_READ_ONLY);
+        if (!f.isFile()) return null;
+
+        try {
+            return ParcelFileDescriptor.open(f, ParcelFileDescriptor.MODE_READ_ONLY);
+        } catch (FileNotFoundException e) {
+            return null;
+        }
     }
 
     @Override
