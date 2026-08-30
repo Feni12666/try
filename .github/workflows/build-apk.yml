@@ -28,6 +28,19 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Restore permanent debug signing key
+        env:
+          DEBUG_KEYSTORE_B64: ${{ secrets.DEBUG_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$DEBUG_KEYSTORE_B64" ]; then
+            echo "Missing GitHub secret: DEBUG_KEYSTORE_B64" >&2
+            exit 1
+          fi
+          mkdir -p "$HOME/.android"
+          printf '%s' "$DEBUG_KEYSTORE_B64" | base64 --decode > "$HOME/.android/debug.keystore"
+          chmod 600 "$HOME/.android/debug.keystore"
+          keytool -list -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey >/dev/null
+
       - name: Build debug APK
         run: gradle --no-daemon --stacktrace :app:assembleDebug
 

@@ -19,9 +19,11 @@ import android.os.ParcelFileDescriptor;
 import android.provider.DocumentsContract;
 import android.util.Log;
 
+import java.io.BufferedOutputStream;
 import java.io.File;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.ArrayDeque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -41,29 +43,50 @@ public class BridgeService extends Service {
     private static final String CHANNEL = "nagram_usb_bridge";
     private static final int NOTIFY_ID = 4102;
     private static final int STABLE_PASSES = 3;
-    private static final long SCAN_SECONDS = 5L;
+    private static final long SCAN_SECONDS = 2L;
+    private static final int MAX_PREPARED = 10;
+    private static final int COPY_BUFFER_BYTES = 4 * 1024 * 1024;
     private static final long FAT32_MAX_FILE = 0xFFFFFFFFL;
     private static final long DEFAULT_RESERVE = 1024L * 1024L * 1024L;
-    private static final long DEFAULT_CLEANUP_DELAY = 5L * 60L * 1000L;
+    private static final long DEFAULT_CLEANUP_DELAY = 3L * 60L * 1000L;
 
     private SharedPreferences prefs;
     private BridgeDatabase db;
     private ScheduledExecutorService scanner;
     private ExecutorService transferExecutor;
     private final AtomicBoolean transferBusy = new AtomicBoolean(false);
-    private final Map<String, Seen> seen = new HashMap<>();
-    private final Map<String, Seen> ignoredInitial = new HashMap<>();
-    private final Set<String> completedThisRun = new HashSet<>();
+    private final Map<String, Seen> seen = new ConcurrentHashMap<>();
+    private final Map<String, Seen> ignoredInitial = new ConcurrentHashMap<>();
+    private final Set<String> completedThisRun = ConcurrentHashMap.newKeySet();
     private final Map<String, Long> retryNotBefore = new ConcurrentHashMap<>();
     private final Map<String, Integer> retryAttempts = new ConcurrentHashMap<>();
+    private final Object queueLock = new Object();
+    private final ArrayDeque<Prepared> readyQueue = new ArrayDeque<>();
+    private final Set<String> queuedKeys = new HashSet<>();
     private volatile INagramFileService remote;
     private long serviceStartMs;
+    private long lastCleanupCheckMs;
 
     private static class Seen {
         long size;
         long mtime;
         int same;
         Seen(long size, long mtime) { this.size = size; this.mtime = mtime; }
+    }
+
+    private static class Prepared {
+        final String path;
+        final long size;
+        final long mtime;
+        final Uri treeUri;
+        final String quickFingerprint;
+        Prepared(String path, long size, long mtime, Uri treeUri, String quickFingerprint) {
+            this.path = path;
+            this.size = size;
+            this.mtime = mtime;
+            this.treeUri = treeUri;
+            this.quickFingerprint = quickFingerprint;
+        }
     }
 
     private final Shizuku.UserServiceArgs userArgs = new Shizuku.UserServiceArgs(
@@ -154,7 +177,11 @@ public class BridgeService extends Service {
 
     private void scanSafely() {
         try {
-            processCleanupDue();
+            long now = System.currentTimeMillis();
+            if (now - lastCleanupCheckMs >= 10_000L) {
+                processCleanupDue();
+                lastCleanupCheckMs = now;
+            }
             scanOnce();
         } catch (Throwable t) {
             Log.e(TAG, "scan", t);
@@ -164,7 +191,7 @@ public class BridgeService extends Service {
 
     private void scanOnce() throws Exception {
         INagramFileService r = remote;
-        if (r == null || transferBusy.get()) return;
+        if (r == null) return;
 
         if (!r.isSourceLayoutAvailable()) {
             prefs.edit().putBoolean("cleanup_suspended", true).apply();
@@ -175,8 +202,14 @@ public class BridgeService extends Service {
         String treeText = prefs.getString("tree_uri", null);
         if (treeText == null) {
             setStatus("Select your USB destination folder");
+            clearPreparedQueue();
             return;
         }
+        Uri treeUri = Uri.parse(treeText);
+
+        // When the 10-file look-ahead queue is already full, do not rescan the whole Nagram tree
+        // during an active USB write. This preserves transfer bandwidth and battery.
+        if (transferBusy.get() && preparedQueueFull()) return;
 
         String[] files = r.listMediaFiles();
         if (files == null) return;
@@ -186,6 +219,8 @@ public class BridgeService extends Service {
         for (String path : files) {
             now.add(path);
             if (completedThisRun.contains(path)) continue;
+            if (preparedQueueFull()) break;
+
             Long retryAt = retryNotBefore.get(path);
             if (retryAt != null) {
                 if (System.currentTimeMillis() < retryAt) continue;
@@ -196,6 +231,7 @@ public class BridgeService extends Service {
             long mtime = r.getLastModified(path);
             if (size <= 0 || mtime <= 0) continue;
             if (db.isKnownHandled(path, size, mtime)) continue;
+            if (isPreparedOrActive(path, size, mtime)) continue;
 
             Seen ignored = ignoredInitial.get(path);
             if (ignored != null) {
@@ -222,27 +258,89 @@ public class BridgeService extends Service {
                 s.same = 0;
             }
 
-            // Download Completion Guard: 3 unchanged observations, 5 seconds apart.
+            // Download Completion Guard: 3 unchanged observations, now 2 seconds apart (~6 seconds).
+            // Once stable, perform only a lightweight source fingerprint and prepare it for the queue.
+            // Full duplicate hashing remains candidate-only and never blocks detection of later downloads.
             if (s.same >= STABLE_PASSES) {
-                final long expectedSize = size;
-                final long expectedMtime = mtime;
-                if (transferBusy.compareAndSet(false, true)) {
-                    transferExecutor.execute(() -> {
-                        try {
-                            transferOne(path, expectedSize, expectedMtime, Uri.parse(treeText));
-                        } finally {
-                            clearProgress();
-                            transferBusy.set(false);
-                        }
-                    });
-                }
-                return;
+                String quickFp = null;
+                try { quickFp = FingerprintUtils.quick(r.openRead(path), size); }
+                catch (Throwable t) { Log.w(TAG, "prepare fingerprint " + path, t); }
+                enqueuePrepared(new Prepared(path, size, mtime, treeUri, quickFp));
             }
         }
 
         seen.keySet().retainAll(now);
         ignoredInitial.keySet().retainAll(now);
-        if (!transferBusy.get()) setIdleStatus(files.length);
+        updateQueuePrefs();
+        launchNextIfIdle();
+        if (!transferBusy.get() && preparedCount() == 0) setIdleStatus(files.length);
+    }
+
+    private String preparedKey(String path, long size, long mtime) {
+        return path + "\n" + size + "\n" + mtime;
+    }
+
+    private boolean isPreparedOrActive(String path, long size, long mtime) {
+        synchronized (queueLock) {
+            return queuedKeys.contains(preparedKey(path, size, mtime));
+        }
+    }
+
+    private boolean preparedQueueFull() {
+        synchronized (queueLock) { return readyQueue.size() >= MAX_PREPARED; }
+    }
+
+    private int preparedCount() {
+        synchronized (queueLock) { return readyQueue.size(); }
+    }
+
+    private void enqueuePrepared(Prepared p) {
+        String key = preparedKey(p.path, p.size, p.mtime);
+        synchronized (queueLock) {
+            if (queuedKeys.contains(key) || readyQueue.size() >= MAX_PREPARED) return;
+            readyQueue.addLast(p);
+            queuedKeys.add(key);
+        }
+        updateQueuePrefs();
+    }
+
+    private void clearPreparedQueue() {
+        synchronized (queueLock) {
+            readyQueue.clear();
+            queuedKeys.clear();
+        }
+        updateQueuePrefs();
+    }
+
+    private void updateQueuePrefs() {
+        prefs.edit().putInt("ready_count", preparedCount()).apply();
+    }
+
+    private void launchNextIfIdle() {
+        if (!transferBusy.compareAndSet(false, true)) return;
+        final Prepared next;
+        synchronized (queueLock) { next = readyQueue.pollFirst(); }
+        updateQueuePrefs();
+        if (next == null) {
+            transferBusy.set(false);
+            return;
+        }
+
+        transferExecutor.execute(() -> {
+            try {
+                transferOne(next.path, next.size, next.mtime, next.treeUri, next.quickFingerprint);
+            } finally {
+                clearProgress();
+                synchronized (queueLock) { queuedKeys.remove(preparedKey(next.path, next.size, next.mtime)); }
+                transferBusy.set(false);
+                updateQueuePrefs();
+                // Start the next already-prepared file immediately; do not wait for another scan tick.
+                launchNextIfIdle();
+                // Also wake the scanner so the look-ahead queue is replenished quickly.
+                try { if (scanner != null && !scanner.isShutdown()) scanner.execute(this::scanSafely); }
+                catch (Throwable ignored) {}
+            }
+        });
     }
 
     private void setIdleStatus(int discovered) {
@@ -253,7 +351,7 @@ public class BridgeService extends Service {
         }
     }
 
-    private void transferOne(String path, long expectedSize, long expectedMtime, Uri treeUri) {
+    private void transferOne(String path, long expectedSize, long expectedMtime, Uri treeUri, String preparedQuickFp) {
         INagramFileService r = remote;
         if (r == null) return;
 
@@ -296,7 +394,7 @@ public class BridgeService extends Service {
             db.update(jobId, "PREFLIGHT", treeText, null, null, null, null, 0L, null);
 
             // Same Video Duplicate Guard is mandatory in V3. Filename is never trusted as identity.
-            String quickFp = FingerprintUtils.quick(r.openRead(path), expectedSize);
+            String quickFp = preparedQuickFp != null ? preparedQuickFp : FingerprintUtils.quick(r.openRead(path), expectedSize);
             if (quickFp == null) throw new IllegalStateException("Could not create a safe source fingerprint");
             BridgeDatabase.Record dup = findConfirmedDuplicate(r, path, expectedSize, quickFp, treeUri, rootDoc);
             if (dup != null) {
@@ -331,16 +429,21 @@ public class BridgeService extends Service {
             ParcelFileDescriptor sourcePfd = r.openRead(path);
             if (sourcePfd == null) throw new IllegalStateException("Source could not be opened");
 
+            ParcelFileDescriptor destPfd = resolver.openFileDescriptor(tempDoc, "w");
+            if (destPfd == null) {
+                try { sourcePfd.close(); } catch (Throwable ignored) {}
+                throw new IllegalStateException("USB output file descriptor unavailable");
+            }
             try (InputStream in = new ParcelFileDescriptor.AutoCloseInputStream(sourcePfd);
-                 OutputStream out = resolver.openOutputStream(tempDoc, "w")) {
-                if (out == null) throw new IllegalStateException("USB output stream unavailable");
-                byte[] buf = new byte[1024 * 1024];
+                 OutputStream out = new BufferedOutputStream(
+                         new ParcelFileDescriptor.AutoCloseOutputStream(destPfd), COPY_BUFFER_BYTES)) {
+                byte[] buf = new byte[COPY_BUFFER_BYTES];
                 int n;
                 while ((n = in.read(buf)) != -1) {
                     out.write(buf, 0, n);
                     copied += n;
                     long now = System.currentTimeMillis();
-                    if (now - lastUi >= 1000L) {
+                    if (now - lastUi >= 1500L) {
                         updateProgress(name, copied, expectedSize, now - started);
                         lastUi = now;
                     }

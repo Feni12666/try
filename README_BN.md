@@ -1,3 +1,7 @@
+# V3.0.3 Fast Queue
+
+বর্তমান build: **3.0.3-fast-queue**। 1 active transfer-এর পেছনে সর্বোচ্চ 10টি file prepared queue-তে রাখা হয়, cleanup delay 3 মিনিট, এবং permanent GitHub debug signing secret ব্যবহার করা হয়।
+
 # Nagram USB Bridge V3 Premium — SHAHADAT
 
 এটি V2/Winner safety core-এর উপর Premium V3 UI build। Core transfer logic নতুন করে rewrite করা হয়নি।

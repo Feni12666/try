@@ -131,7 +131,13 @@ public class MainActivity extends Activity {
         if (!prefs.contains("delete_after_verified")) { e.putBoolean("delete_after_verified", true); changed = true; }
         if (!prefs.getBoolean("duplicate_guard", true)) { e.putBoolean("duplicate_guard", true); changed = true; }
         else if (!prefs.contains("duplicate_guard")) { e.putBoolean("duplicate_guard", true); changed = true; }
-        if (!prefs.contains("cleanup_delay_ms")) { e.putLong("cleanup_delay_ms", 5L * 60L * 1000L); changed = true; }
+        if (!prefs.contains("cleanup_delay_ms")) { e.putLong("cleanup_delay_ms", 3L * 60L * 1000L); changed = true; }
+        if (!prefs.getBoolean("v303_cleanup_migrated", false)) {
+            long existing = prefs.getLong("cleanup_delay_ms", 5L * 60L * 1000L);
+            if (existing == 5L * 60L * 1000L) e.putLong("cleanup_delay_ms", 3L * 60L * 1000L);
+            e.putBoolean("v303_cleanup_migrated", true);
+            changed = true;
+        }
         if (!prefs.contains("reserve_bytes")) { e.putLong("reserve_bytes", 1024L * 1024L * 1024L); changed = true; }
         if (changed) e.apply();
     }
@@ -562,7 +568,7 @@ public class MainActivity extends Activity {
         delete.setOnCheckedChangeListener((b, checked) -> prefs.edit().putBoolean("delete_after_verified", checked).apply());
         safety.addView(delete);
         safety.addView(infoRow("Same Video Duplicate Guard", "Always ON ✓"));
-        safety.addView(infoRow("Cleanup delay", humanDuration(prefs.getLong("cleanup_delay_ms", 5L * 60L * 1000L))));
+        safety.addView(infoRow("Cleanup delay", humanDuration(prefs.getLong("cleanup_delay_ms", 3L * 60L * 1000L))));
         safety.addView(infoRow("USB free-space reserve", BridgeService.human(prefs.getLong("reserve_bytes", 1024L * 1024L * 1024L))));
         root.addView(safety);
         root.addView(space(12));
@@ -641,6 +647,7 @@ public class MainActivity extends Activity {
     private void refreshHome(boolean binder, boolean granted, boolean running, boolean cleanupSuspended, String tree) {
         String current = prefs.getString("current_name", null);
         String lastStatus = prefs.getString("last_status", "All caught up ✓");
+        int readyCount = Math.max(0, prefs.getInt("ready_count", 0));
 
         if (current != null) {
             setHeroState("TRANSFER ACTIVE", "Moving to USB with verification protection.", BLUE, PremiumViews.ShieldPulseView.BLUE, true);
@@ -654,14 +661,18 @@ public class MainActivity extends Activity {
             transferSpeed.setText("⚡ " + BridgeService.humanRate(speed));
             transferBar.setProgress(pct, true);
             arcProgress.setProgressAnimated(pct);
-            transferEta.setText(eta >= 0 ? "◷  ~" + formatEta(eta) + " remaining" : "Verifying safe transfer…");
+            String etaText = eta >= 0 ? "◷  ~" + formatEta(eta) + " remaining" : "Verifying safe transfer…";
+            if (readyCount > 0) etaText += "  •  " + readyCount + " ready next";
+            transferEta.setText(etaText);
         } else {
             transferName.setText("Ready for next file");
             transferSize.setText(lastStatus == null ? "No active transfer" : lastStatus);
             transferSpeed.setText("● Ready");
             transferBar.setProgress(0, true);
             arcProgress.setProgressAnimated(0);
-            transferEta.setText("Watching safely for completed downloads");
+            transferEta.setText(readyCount > 0
+                    ? readyCount + " prepared • starting next file"
+                    : "Watching safely for completed downloads");
 
             if (!binder || !granted) setHeroState("SHIZUKU REQUIRED", "Your originals are safe. Start / allow Shizuku.", AMBER, PremiumViews.ShieldPulseView.AMBER, false);
             else if (tree == null) setHeroState("USB NEEDED", "Choose your approved Pendrive destination.", AMBER, PremiumViews.ShieldPulseView.AMBER, false);
