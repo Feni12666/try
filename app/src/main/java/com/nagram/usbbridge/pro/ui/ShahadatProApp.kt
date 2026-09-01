@@ -106,6 +106,7 @@ fun ShahadatProApp(
     if (showSplash) { PersonalSplash(); return }
 
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val fileState by fileManagerViewModel.state.collectAsStateWithLifecycle()
     var selected by rememberSaveable { mutableIntStateOf(0) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var playback by remember { mutableStateOf<VideoPlaybackRequest?>(null) }
@@ -167,7 +168,7 @@ fun ShahadatProApp(
                                             id = "file:${entry.id}",
                                             name = entry.name,
                                             uri = uri,
-                                            folder = state.current?.label ?: "Files",
+                                            folder = fileState.current?.label ?: "Files",
                                             size = entry.size,
                                             durationMs = 0L,
                                             width = 0,

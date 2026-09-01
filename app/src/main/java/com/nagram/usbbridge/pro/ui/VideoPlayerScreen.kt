@@ -161,10 +161,10 @@ fun PremiumVideoPlayerScreen(
                 .pointerInput(activity) {
                     detectVerticalDragGestures { _, dragAmount ->
                         val window = activity?.window ?: return@detectVerticalDragGestures
-                        val current = window.attributes.brightness.takeIf { it >= 0f } ?: 0.5f
+                        val current = window.attributes.screenBrightness.takeIf { it >= 0f } ?: 0.5f
                         val next = (current - dragAmount / 900f).coerceIn(0.03f, 1f)
                         val params = window.attributes
-                        params.brightness = next
+                        params.screenBrightness = next
                         window.attributes = params
                         gestureText = "Brightness ${(next * 100).roundToInt()}%"
                     }
