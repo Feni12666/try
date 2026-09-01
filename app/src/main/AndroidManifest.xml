@@ -5,10 +5,13 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
 
     <application
+        android:name=".pro.ShahadatProApplication"
         android:allowBackup="false"
-        android:label="Nagram USB Bridge"
+        android:label="SHAHADAT PRO"
         android:icon="@drawable/ic_bridge"
         android:theme="@style/AppTheme"
         android:supportsRtl="true">

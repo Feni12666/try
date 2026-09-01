@@ -1,3 +1,15 @@
+# SHAHADAT PRO — Milestone 0 + A
+
+এটি approved SHAHADAT PRO blueprint-এর প্রথম foundation build। বর্তমান V3 safety/transfer engine রেখে Kotlin + Jetpack Compose + Material 3 + MVVM + Room + WorkManager foundation যোগ করা হয়েছে।
+
+**Data-safety rule:** package id, `bridge` preferences এবং `bridge_journal.db` অপরিবর্তিত রাখা হয়েছে।
+
+**Build:** GitHub Actions → `SHAHADAT-PRO-M0-A-Test-APK` (Direct flavor).
+
+দেখুন: `MILESTONE_0_A_STATUS.md` এবং `MILESTONE_0_MIGRATION_BN.md`।
+
+---
+
 # V3.0.3 Fast Queue
 
 বর্তমান build: **3.0.3-fast-queue**। 1 active transfer-এর পেছনে সর্বোচ্চ 10টি file prepared queue-তে রাখা হয়, cleanup delay 3 মিনিট, এবং permanent GitHub debug signing secret ব্যবহার করা হয়।
