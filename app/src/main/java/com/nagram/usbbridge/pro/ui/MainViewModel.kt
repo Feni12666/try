@@ -31,6 +31,10 @@ data class HomeUiState(
     val currentSpeed: Long = 0,
     val currentEta: Long = -1,
     val readyCount: Int = 0,
+    val activeTransfers: Int = 0,
+    val configuredParallelTransfers: Int = 2,
+    val safeMode: Boolean = false,
+    val cleanupDelayMinutes: Int = 3,
     val todayFiles: Long = 0,
     val todayBytes: Long = 0,
     val attention: Long = 0,
@@ -50,13 +54,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             while (isActive) {
                 refresh()
-                delay(if (_state.value.running) 1500L else 3500L)
+                delay(if (_state.value.running) 1200L else 3000L)
             }
         }
     }
 
     fun refreshNow() {
         viewModelScope.launch { refresh() }
+    }
+
+    fun setCleanupDelayMinutes(minutes: Int) {
+        if (minutes !in setOf(1, 3, 5)) return
+        prefs.edit().putLong("cleanup_delay_ms", minutes * 60_000L).apply()
+        refreshNow()
     }
 
     private suspend fun refresh() = withContext(Dispatchers.IO) {
@@ -70,6 +80,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             Shizuku.checkSelfPermission() == android.content.pm.PackageManager.PERMISSION_GRANTED
         }.getOrDefault(false)
 
+        val cleanupMs = prefs.getLong("cleanup_delay_ms", 3L * 60L * 1000L)
+        val cleanupMinutes = when ((cleanupMs / 60_000L).toInt()) {
+            1 -> 1
+            5 -> 5
+            else -> 3
+        }
+        val failureCount = prefs.getInt("recent_safety_failures", 0)
+        val safeMode = prefs.getBoolean("cleanup_suspended", false) || failureCount >= 3
+
         _state.value = HomeUiState(
             running = prefs.getBoolean("running", false),
             shizukuRunning = shizukuRunning,
@@ -81,6 +100,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             currentSpeed = prefs.getLong("current_speed", 0L),
             currentEta = prefs.getLong("current_eta", -1L),
             readyCount = prefs.getInt("ready_count", 0).coerceAtLeast(0),
+            activeTransfers = prefs.getInt("active_transfer_count", 0).coerceAtLeast(0),
+            configuredParallelTransfers = prefs.getInt("configured_parallel_transfers", 2).coerceIn(1, 2),
+            safeMode = safeMode,
+            cleanupDelayMinutes = cleanupMinutes,
             todayFiles = stats?.files ?: 0,
             todayBytes = stats?.bytes ?: 0,
             attention = stats?.attention ?: 0,

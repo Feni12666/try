@@ -11,7 +11,7 @@
     <application
         android:name=".pro.ShahadatProApplication"
         android:allowBackup="false"
-        android:label="SHAHADAT PRO"
+        android:label="@string/app_name"
         android:icon="@drawable/ic_bridge"
         android:theme="@style/AppTheme"
         android:supportsRtl="true">

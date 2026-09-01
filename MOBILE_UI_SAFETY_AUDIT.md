@@ -1,22 +1,18 @@
-# V3.0.1 Mobile UI + Safety Audit
+# Mobile UI + Safety Audit — 4.0.0-alpha02-bluewhite
 
-Checked before repackaging:
-
-- Android targetSdk 35 system-bar/gesture inset handling added.
-- Bottom Home / Activity / Files / Settings bar is outside scroll content and padded above Android navigation controls.
-- Extra side/bottom margin added to bottom navigation.
-- Compact layout path added for <=380dp phone widths.
-- Header, hero shield, transfer arc, storage text and connection row shrink on compact phones.
-- Header bell is functional (opens Activity); no dead decorative action.
-- Continuous avatar animators removed; finite entrance animation remains.
-- Animated ShieldPulseView already cancels on detach.
-- Idle dashboard refresh slowed; active transfer remains fast-refresh.
-- Existing-file migration requires explicit confirmation when enabling.
-- Same Video Duplicate Guard is mandatory and no longer user-disableable.
-- Duplicate decision remains exact-size candidate + quick fingerprint + full SHA-256 confirmation.
-- Cleanup revalidation now also re-checks destination quick fingerprint before source deletion.
-- Repeated transfer failures use bounded retry backoff rather than immediate endless retries.
+- final blue/white Design #8 direction applied.
+- splash shows personal image + name only; source search confirms no personal-name occurrence elsewhere in app UI source.
+- bottom navigation uses `navigationBarsPadding()` and remains above Android system navigation/gesture area.
+- Home / Files / Videos / Duplicates / Sync are fixed bottom destinations.
+- Phone / USB switching is explicit in Files.
+- cleanup delay uses 1/3/5 minute chips; default 3.
+- duplicate comparison layout includes Size/Duration positions and Keep Newest / Keep Oldest / Delete Selected actions (disabled until a real scan result is supplied).
+- Smart Sync screen includes Shizuku and USB controls.
+- 2 active transfers + 10 prepared queue implemented in the existing transfer service.
+- automatic one-worker safety fallback implemented.
+- same-content concurrent transfer guard added.
 - XML resources parse successfully.
-- Java sources were syntax-screened with javac; full Android compile still requires GitHub Actions/Android SDK.
+- no obsolete single-transfer `transferBusy`/`launchNextIfIdle` symbols remain.
+- no invalid `androidx.compose.foundation.layout.weight` import remains.
 
-Golden rule: if destination/source identity cannot be proven, the original is kept.
+Full Android compile verification is performed by the GitHub Actions Android toolchain.

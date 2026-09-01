@@ -34,7 +34,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import rikka.shizuku.Shizuku;
 
@@ -45,6 +45,7 @@ public class BridgeService extends Service {
     private static final int STABLE_PASSES = 3;
     private static final long SCAN_SECONDS = 2L;
     private static final int MAX_PREPARED = 10;
+    private static final int MAX_ACTIVE_TRANSFERS = 2;
     private static final int COPY_BUFFER_BYTES = 4 * 1024 * 1024;
     private static final long FAT32_MAX_FILE = 0xFFFFFFFFL;
     private static final long DEFAULT_RESERVE = 1024L * 1024L * 1024L;
@@ -54,7 +55,8 @@ public class BridgeService extends Service {
     private BridgeDatabase db;
     private ScheduledExecutorService scanner;
     private ExecutorService transferExecutor;
-    private final AtomicBoolean transferBusy = new AtomicBoolean(false);
+    private final AtomicInteger activeTransfers = new AtomicInteger(0);
+    private final Set<String> activeContentKeys = ConcurrentHashMap.newKeySet();
     private final Map<String, Seen> seen = new ConcurrentHashMap<>();
     private final Map<String, Seen> ignoredInitial = new ConcurrentHashMap<>();
     private final Set<String> completedThisRun = ConcurrentHashMap.newKeySet();
@@ -139,7 +141,10 @@ public class BridgeService extends Service {
         bindRemoteIfPossible();
 
         scanner = Executors.newSingleThreadScheduledExecutor();
-        transferExecutor = Executors.newSingleThreadExecutor();
+        if (!prefs.contains("configured_parallel_transfers")) {
+            prefs.edit().putInt("configured_parallel_transfers", MAX_ACTIVE_TRANSFERS).apply();
+        }
+        transferExecutor = Executors.newFixedThreadPool(MAX_ACTIVE_TRANSFERS);
         scanner.scheduleWithFixedDelay(this::scanSafely, 1, SCAN_SECONDS, TimeUnit.SECONDS);
     }
 
@@ -209,7 +214,7 @@ public class BridgeService extends Service {
 
         // When the 10-file look-ahead queue is already full, do not rescan the whole Nagram tree
         // during an active USB write. This preserves transfer bandwidth and battery.
-        if (transferBusy.get() && preparedQueueFull()) return;
+        if (activeTransfers.get() > 0 && preparedQueueFull()) return;
 
         String[] files = r.listMediaFiles();
         if (files == null) return;
@@ -272,8 +277,8 @@ public class BridgeService extends Service {
         seen.keySet().retainAll(now);
         ignoredInitial.keySet().retainAll(now);
         updateQueuePrefs();
-        launchNextIfIdle();
-        if (!transferBusy.get() && preparedCount() == 0) setIdleStatus(files.length);
+        launchTransfersIfCapacity();
+        if (activeTransfers.get() == 0 && preparedCount() == 0) setIdleStatus(files.length);
     }
 
     private String preparedKey(String path, long size, long mtime) {
@@ -313,34 +318,44 @@ public class BridgeService extends Service {
     }
 
     private void updateQueuePrefs() {
-        prefs.edit().putInt("ready_count", preparedCount()).apply();
+        prefs.edit()
+                .putInt("ready_count", preparedCount())
+                .putInt("active_transfer_count", activeTransfers.get())
+                .apply();
     }
 
-    private void launchNextIfIdle() {
-        if (!transferBusy.compareAndSet(false, true)) return;
-        final Prepared next;
-        synchronized (queueLock) { next = readyQueue.pollFirst(); }
-        updateQueuePrefs();
-        if (next == null) {
-            transferBusy.set(false);
-            return;
-        }
+    private int effectiveMaxActiveTransfers() {
+        boolean safer = prefs.getBoolean("cleanup_suspended", false) ||
+                prefs.getInt("recent_safety_failures", 0) >= 3;
+        if (safer) return 1;
+        return Math.max(1, Math.min(MAX_ACTIVE_TRANSFERS,
+                prefs.getInt("configured_parallel_transfers", MAX_ACTIVE_TRANSFERS)));
+    }
 
-        transferExecutor.execute(() -> {
-            try {
-                transferOne(next.path, next.size, next.mtime, next.treeUri, next.quickFingerprint);
-            } finally {
-                clearProgress();
-                synchronized (queueLock) { queuedKeys.remove(preparedKey(next.path, next.size, next.mtime)); }
-                transferBusy.set(false);
-                updateQueuePrefs();
-                // Start the next already-prepared file immediately; do not wait for another scan tick.
-                launchNextIfIdle();
-                // Also wake the scanner so the look-ahead queue is replenished quickly.
-                try { if (scanner != null && !scanner.isShutdown()) scanner.execute(this::scanSafely); }
-                catch (Throwable ignored) {}
-            }
-        });
+    private synchronized void launchTransfersIfCapacity() {
+        while (activeTransfers.get() < effectiveMaxActiveTransfers()) {
+            final Prepared next;
+            synchronized (queueLock) { next = readyQueue.pollFirst(); }
+            if (next == null) break;
+
+            activeTransfers.incrementAndGet();
+            updateQueuePrefs();
+            transferExecutor.execute(() -> {
+                try {
+                    transferOne(next.path, next.size, next.mtime, next.treeUri, next.quickFingerprint);
+                } finally {
+                    synchronized (queueLock) { queuedKeys.remove(preparedKey(next.path, next.size, next.mtime)); }
+                    int remaining = activeTransfers.decrementAndGet();
+                    if (remaining <= 0) clearProgress();
+                    updateQueuePrefs();
+                    // Start the next already-prepared file immediately; do not wait for another scan tick.
+                    launchTransfersIfCapacity();
+                    // Replenish the 10-file look-ahead queue while the other transfer may still be active.
+                    try { if (scanner != null && !scanner.isShutdown()) scanner.execute(this::scanSafely); }
+                    catch (Throwable ignored) {}
+                }
+            });
+        }
     }
 
     private void setIdleStatus(int discovered) {
@@ -361,6 +376,8 @@ public class BridgeService extends Service {
         ContentResolver resolver = getContentResolver();
         Uri rootDoc = DocumentTreeUtils.rootDocumentUri(treeUri);
         Uri tempDoc = null;
+        String contentKey = null;
+        boolean ownsContentKey = false;
 
         try {
             // Source Mutation Guard — recheck immediately before any destination write.
@@ -396,6 +413,18 @@ public class BridgeService extends Service {
             // Same Video Duplicate Guard is mandatory in V3. Filename is never trusted as identity.
             String quickFp = preparedQuickFp != null ? preparedQuickFp : FingerprintUtils.quick(r.openRead(path), expectedSize);
             if (quickFp == null) throw new IllegalStateException("Could not create a safe source fingerprint");
+
+            // Two transfers may run concurrently, but the same content candidate must never be written twice.
+            // If another active job has the same size + quick fingerprint, defer this source briefly; after
+            // the first job finalizes, normal duplicate confirmation will find the USB copy and skip it safely.
+            contentKey = expectedSize + "\n" + quickFp;
+            if (!activeContentKeys.add(contentKey)) {
+                db.updateStatus(jobId, "RETRY_PENDING", "Matching content is already being transferred; waiting for duplicate confirmation");
+                deferRetryFixed(path, 3_000L);
+                return;
+            }
+            ownsContentKey = true;
+
             BridgeDatabase.Record dup = findConfirmedDuplicate(r, path, expectedSize, quickFp, treeUri, rootDoc);
             if (dup != null) {
                 long delay = prefs.getLong("cleanup_delay_ms", DEFAULT_CLEANUP_DELAY);
@@ -518,6 +547,8 @@ public class BridgeService extends Service {
             setStatus("Transfer failed safely — original kept: " + name + " — " + shortMessage(t));
             updateNotification("Transfer failed — original kept");
             deferRetryBackoff(path);
+        } finally {
+            if (ownsContentKey && contentKey != null) activeContentKeys.remove(contentKey);
         }
     }
 
@@ -705,8 +736,8 @@ public class BridgeService extends Service {
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= 26) {
             NotificationManager nm = getSystemService(NotificationManager.class);
-            NotificationChannel ch = new NotificationChannel(CHANNEL, "Nagram USB Bridge", NotificationManager.IMPORTANCE_LOW);
-            ch.setDescription("Safe Nagram to USB transfer status");
+            NotificationChannel ch = new NotificationChannel(CHANNEL, "Storage Sync", NotificationManager.IMPORTANCE_LOW);
+            ch.setDescription("Safe phone and USB transfer status");
             nm.createNotificationChannel(ch);
         }
     }
@@ -718,7 +749,7 @@ public class BridgeService extends Service {
         Notification.Builder b = Build.VERSION.SDK_INT >= 26
                 ? new Notification.Builder(this, CHANNEL)
                 : new Notification.Builder(this);
-        return b.setContentTitle("Nagram USB Bridge")
+        return b.setContentTitle("Storage Sync")
                 .setContentText(text)
                 .setSmallIcon(android.R.drawable.stat_sys_upload_done)
                 .setOngoing(true)

@@ -1,4 +1,4 @@
-name: Build SHAHADAT PRO Test APK
+name: Build SHAHADAT PRO BlueWhite APK
 
 on:
   workflow_dispatch:
@@ -47,7 +47,7 @@ jobs:
       - name: Upload Direct APK
         uses: actions/upload-artifact@v4
         with:
-          name: SHAHADAT-PRO-M0-A-Test-APK
+          name: SHAHADAT-PRO-BlueWhite-Test-APK
           path: app/build/outputs/apk/direct/debug/app-direct-debug.apk
           if-no-files-found: error
           retention-days: 30

@@ -50,7 +50,10 @@ class MainActivity : ComponentActivity() {
         if (!prefs.contains("cleanup_delay_ms")) {
             prefs.edit().putLong("cleanup_delay_ms", 3L * 60L * 1000L).apply()
         }
-        prefs.edit().putBoolean("duplicate_guard", true).apply()
+        prefs.edit()
+            .putBoolean("duplicate_guard", true)
+            .putInt("configured_parallel_transfers", 2)
+            .apply()
 
         setContent {
             ShahadatProTheme {
