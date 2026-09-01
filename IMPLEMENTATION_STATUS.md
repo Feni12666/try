@@ -1,24 +1,7 @@
-# Implementation Status — Manual File Manager V2
+# Implementation status
 
-## Implemented in this test source
-- Blue/white premium Material 3 shell with dark/System/AMOLED modes.
-- Splash-only SHAHADAT branding and photo.
-- Mobile-safe 5-tab bottom navigation.
-- Real Phone shared-storage browser (Direct flavor / All Files Access).
-- Real USB/SSD SAF tree browser.
-- Optional Shizuku browser for Android/data and Android/obb, including manual copy/move/rename/delete/create-folder when Shizuku is connected.
-- Folder navigation, List/Grid view, hidden-file toggle.
-- Multi-select, Create Folder, Rename, Delete.
-- Manual Copy / Move with an in-app destination chooser; no default destination.
-- Keep Both / Replace / Skip conflict choices.
-- Foreground manual transfer service with 2 active tasks, progress, speed, ETA, Pause/Resume/Cancel notification actions.
-- Move safety: temporary copy, SHA-256 verification, cleanup delay selector (1/3/5, default 3), final destination revalidation, then source delete.
-- Content duplicate protection for same-size destination candidates using SHA-256; confirmed same content is skipped.
-- Legacy Nagram watcher and boot auto-copy disabled and not registered.
+Current test milestone: File Manager + Video Player V3 (`4.0.0-alpha04-file-video`, code 19).
 
-## Planned later milestones
-- All Video Folders indexing.
-- Media3 in-app player and gestures.
-- Full Exact Duplicate group scanner with duration + quick fingerprint cache + comparison UI.
-- Similar Video frame-fingerprint deep scan.
-- User-created optional Auto-Sync rules (source and target selected by user, OFF by default).
+Working core in source: manual Phone/USB file browsing and operations, optional Shizuku restricted browsing, safe transfer engine, themes, live transfer controls, video folder indexing and Media3 player.
+
+Not claimed complete yet: production-grade exact duplicate cleanup, Similar Video deep scan, user-created optional Auto Sync rules, Play Store policy/release signing/QA.

@@ -27,6 +27,7 @@ import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.PlayCircleOutline
+import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.Usb
@@ -66,10 +67,16 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import android.net.Uri
+import java.io.File
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nagram.usbbridge.R
 import com.nagram.usbbridge.pro.files.FileManagerViewModel
+import com.nagram.usbbridge.pro.files.StorageKind
 import com.nagram.usbbridge.pro.ui.theme.AppThemeMode
+import com.nagram.usbbridge.pro.video.VideoLibraryViewModel
+import com.nagram.usbbridge.pro.video.VideoPlaybackRequest
+import com.nagram.usbbridge.pro.video.VideoItem
 import kotlinx.coroutines.delay
 import kotlin.math.ln
 import kotlin.math.pow
@@ -79,17 +86,19 @@ private enum class ProTab(val label: String, val icon: ImageVector) {
     FILES("Files", Icons.Outlined.Folder),
     VIDEOS("Videos", Icons.Outlined.PlayCircleOutline),
     DUPLICATES("Duplicates", Icons.Outlined.ContentCopy),
-    SYNC("Sync", Icons.Outlined.Sync)
+    MORE("More", Icons.Outlined.MoreHoriz)
 }
 
 @Composable
 fun ShahadatProApp(
     viewModel: MainViewModel,
     fileManagerViewModel: FileManagerViewModel,
+    videoLibraryViewModel: VideoLibraryViewModel,
     distribution: String,
     onChooseUsb: () -> Unit,
     onRequestShizuku: () -> Unit,
     onRequestPhoneAccess: () -> Unit,
+    onRequestVideoAccess: () -> Unit,
     onOpenAppSettings: () -> Unit
 ) {
     var showSplash by rememberSaveable { mutableStateOf(true) }
@@ -99,6 +108,11 @@ fun ShahadatProApp(
     val state by viewModel.state.collectAsStateWithLifecycle()
     var selected by rememberSaveable { mutableIntStateOf(0) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
+    var playback by remember { mutableStateOf<VideoPlaybackRequest?>(null) }
+
+    if (playback != null) {
+        PremiumVideoPlayerScreen(request = playback!!, onBack = { playback = null })
+    } else {
 
     if (showSettings) {
         SettingsDialog(
@@ -139,18 +153,51 @@ fun ShahadatProApp(
                         distribution = distribution,
                         onChooseUsb = onChooseUsb,
                         onRequestPhoneAccess = onRequestPhoneAccess,
-                        onRequestShizuku = onRequestShizuku
+                        onRequestShizuku = onRequestShizuku,
+                        onOpenVideoFile = { entry ->
+                            val uri = when (entry.storage) {
+                                StorageKind.PHONE -> Uri.fromFile(File(entry.id))
+                                StorageKind.USB -> Uri.parse(entry.id)
+                                StorageKind.SHIZUKU -> null
+                            }
+                            if (uri != null) {
+                                playback = VideoPlaybackRequest(
+                                    items = listOf(
+                                        VideoItem(
+                                            id = "file:${entry.id}",
+                                            name = entry.name,
+                                            uri = uri,
+                                            folder = state.current?.label ?: "Files",
+                                            size = entry.size,
+                                            durationMs = 0L,
+                                            width = 0,
+                                            height = 0,
+                                            modifiedMs = entry.modified,
+                                            storage = entry.storage
+                                        )
+                                    ),
+                                    startIndex = 0
+                                )
+                            }
+                        }
                     )
-                    ProTab.VIDEOS -> VideosScreen()
+                    ProTab.VIDEOS -> PremiumVideosScreen(
+                        viewModel = videoLibraryViewModel,
+                        onRequestPermission = onRequestVideoAccess,
+                        onChooseUsb = onChooseUsb,
+                        onPlay = { playback = it }
+                    )
                     ProTab.DUPLICATES -> DuplicatesScreen()
-                    ProTab.SYNC -> SyncScreen(
+                    ProTab.MORE -> MoreScreen(
                         state = state,
                         onRequestShizuku = onRequestShizuku,
-                        onChooseUsb = onChooseUsb
+                        onChooseUsb = onChooseUsb,
+                        onSettings = { showSettings = true }
                     )
                 }
             }
         }
+    }
     }
 }
 
@@ -261,14 +308,6 @@ internal fun ManualOperationCard(state: HomeUiState) {
 }
 
 @Composable
-private fun VideosScreen() {
-    SimpleInfoScreen(
-        title = "Videos",
-        body = "All Video Folders will index Phone and selected USB storage here. The Media3 in-app player, thumbnails and video-folder filters are the next feature milestone."
-    )
-}
-
-@Composable
 private fun DuplicatesScreen() {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item { Text("Duplicates", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black) }
@@ -293,9 +332,17 @@ private fun DuplicatesScreen() {
 }
 
 @Composable
-private fun SyncScreen(state: HomeUiState, onRequestShizuku: () -> Unit, onChooseUsb: () -> Unit) {
+private fun MoreScreen(state: HomeUiState, onRequestShizuku: () -> Unit, onChooseUsb: () -> Unit, onSettings: () -> Unit) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item { Text("Sync", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black) }
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.weight(1f)) {
+                    Text("More", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
+                    Text("Storage, access, transfer and appearance", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                IconButton(onClick = onSettings) { Icon(Icons.Outlined.Settings, contentDescription = "Settings") }
+            }
+        }
         item {
             Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                 Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {

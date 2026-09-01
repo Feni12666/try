@@ -4,12 +4,12 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -21,20 +21,23 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.GridView
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.List
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Sort
 import androidx.compose.material.icons.outlined.Usb
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -49,6 +52,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -75,8 +79,12 @@ import com.nagram.usbbridge.pro.files.ManualOperation
 import com.nagram.usbbridge.pro.files.StorageKind
 import java.text.DateFormat
 import java.util.Date
+import java.util.Locale
 import kotlin.math.ln
 import kotlin.math.pow
+
+enum class FileSort { NAME, DATE, SIZE, TYPE }
+enum class FileCategory { ALL, FOLDERS, VIDEO, IMAGE, AUDIO, DOCUMENT }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -86,14 +94,20 @@ fun ManualFilesScreen(
     distribution: String,
     onChooseUsb: () -> Unit,
     onRequestPhoneAccess: () -> Unit,
-    onRequestShizuku: () -> Unit
+    onRequestShizuku: () -> Unit,
+    onOpenVideoFile: (BrowserEntry) -> Unit
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var grid by rememberSaveable { mutableStateOf(false) }
     var showCreate by remember { mutableStateOf(false) }
     var showRename by remember { mutableStateOf(false) }
     var showDelete by remember { mutableStateOf(false) }
+    var showProperties by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
+    var sortMenu by remember { mutableStateOf(false) }
+    var query by rememberSaveable { mutableStateOf("") }
+    var sort by rememberSaveable { mutableStateOf(FileSort.NAME) }
+    var category by rememberSaveable { mutableStateOf(FileCategory.ALL) }
 
     LaunchedEffect(Unit) { viewModel.refreshPermissionsAndStorage() }
 
@@ -112,6 +126,10 @@ fun ManualFilesScreen(
             dismissButton = { TextButton(onClick = { showDelete = false }) { Text("Cancel") } }
         )
     }
+    if (showProperties) {
+        val item = state.entries.firstOrNull { state.selected.contains(it.id) }
+        if (item != null) PropertiesDialog(item = item, onDismiss = { showProperties = false }) else showProperties = false
+    }
 
     if (state.destinationMode != null) {
         DestinationChooser(
@@ -129,11 +147,23 @@ fun ManualFilesScreen(
         return
     }
 
+    val visibleEntries = remember(state.entries, query, sort, category) {
+        state.entries
+            .asSequence()
+            .filter { entry ->
+                val q = query.trim().lowercase(Locale.US)
+                q.isBlank() || entry.name.lowercase(Locale.US).contains(q)
+            }
+            .filter { entry -> matchesCategory(entry, category) }
+            .sortedWith(fileComparator(sort))
+            .toList()
+    }
+
     Column(Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.weight(1f)) {
                 Text("Files", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
-                Text("Browse first. You choose every source and destination.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                Text("Phone + USB file manager • manual source and destination", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             }
             IconButton(onClick = viewModel::refresh) { Icon(Icons.Outlined.Refresh, contentDescription = "Refresh") }
             Box {
@@ -141,6 +171,7 @@ fun ManualFilesScreen(
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                     DropdownMenuItem(text = { Text("New folder") }, leadingIcon = { Icon(Icons.Outlined.Add, null) }, onClick = { menuOpen = false; showCreate = true })
                     DropdownMenuItem(text = { Text(if (state.showHidden) "Hide hidden files" else "Show hidden files") }, onClick = { menuOpen = false; viewModel.setShowHidden(!state.showHidden) })
+                    DropdownMenuItem(text = { Text(if (grid) "List view" else "Grid view") }, onClick = { menuOpen = false; grid = !grid })
                 }
             }
         }
@@ -149,13 +180,13 @@ fun ManualFilesScreen(
             TabRow(selectedTabIndex = if (state.storage == StorageKind.USB) 1 else 0, containerColor = MaterialTheme.colorScheme.surface) {
                 Tab(
                     selected = state.storage != StorageKind.USB,
-                    onClick = { viewModel.selectStorage(StorageKind.PHONE) },
+                    onClick = { query = ""; viewModel.selectStorage(StorageKind.PHONE) },
                     text = { Text("Phone") },
                     icon = { Icon(Icons.Outlined.PhoneAndroid, null) }
                 )
                 Tab(
                     selected = state.storage == StorageKind.USB,
-                    onClick = { viewModel.selectStorage(StorageKind.USB) },
+                    onClick = { query = ""; viewModel.selectStorage(StorageKind.USB) },
                     text = { Text("USB / SSD") },
                     icon = { Icon(Icons.Outlined.Usb, null) }
                 )
@@ -193,7 +224,7 @@ fun ManualFilesScreen(
         if (state.storage == StorageKind.USB && !state.usbAvailable) {
             Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Choose the USB / SSD root or a folder you want this app to manage.", fontWeight = FontWeight.Bold)
+                    Text("Choose the USB / SSD root or any folder you want this app to manage.", fontWeight = FontWeight.Bold)
                     Button(onClick = onChooseUsb, modifier = Modifier.fillMaxWidth()) { Text("Choose USB / SSD Folder") }
                 }
             }
@@ -211,14 +242,49 @@ fun ManualFilesScreen(
 
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             IconButton(onClick = viewModel::up, enabled = state.stack.size > 1) { Icon(Icons.Outlined.ArrowBack, contentDescription = "Up") }
-            Text(
-                state.current?.label ?: if (state.storage == StorageKind.PHONE) "Phone Storage" else "USB / SSD",
-                modifier = Modifier.weight(1f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                fontWeight = FontWeight.Bold
-            )
+            Row(
+                modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                state.stack.forEachIndexed { index, location ->
+                    TextButton(onClick = { viewModel.jumpTo(index) }) { Text(location.label, maxLines = 1) }
+                    if (index < state.stack.lastIndex) Text("›", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
             IconButton(onClick = { grid = !grid }) { Icon(if (grid) Icons.Outlined.List else Icons.Outlined.GridView, contentDescription = "View") }
+        }
+
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                leadingIcon = { Icon(Icons.Outlined.Search, null) },
+                placeholder = { Text("Search this folder") },
+                shape = RoundedCornerShape(16.dp)
+            )
+            Box {
+                IconButton(onClick = { sortMenu = true }) { Icon(Icons.Outlined.Sort, contentDescription = "Sort") }
+                DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
+                    FileSort.entries.forEach { mode ->
+                        DropdownMenuItem(
+                            text = { Text(sortLabel(mode)) },
+                            onClick = { sort = mode; sortMenu = false }
+                        )
+                    }
+                }
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(7.dp)
+        ) {
+            FileCategory.entries.forEach { item ->
+                FilterChip(selected = category == item, onClick = { category = item }, label = { Text(categoryLabel(item)) })
+            }
         }
 
         state.message?.let {
@@ -233,6 +299,7 @@ fun ManualFilesScreen(
                 onCopy = { viewModel.beginDestination(ManualOperation.COPY) },
                 onMove = { viewModel.beginDestination(ManualOperation.MOVE) },
                 onRename = { if (state.selected.size == 1) showRename = true },
+                onInfo = { if (state.selected.size == 1) showProperties = true },
                 onDelete = { showDelete = true },
                 onClear = viewModel::clearSelection
             )
@@ -241,14 +308,39 @@ fun ManualFilesScreen(
         Box(Modifier.fillMaxWidth().weight(1f)) {
             when {
                 state.loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
+                visibleEntries.isEmpty() -> Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Outlined.Folder, null, modifier = Modifier.size(44.dp), tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.height(8.dp))
+                    Text(if (query.isBlank() && category == FileCategory.ALL) "Folder is empty" else "No matching files", fontWeight = FontWeight.Bold)
+                }
                 grid -> LazyVerticalGrid(columns = GridCells.Adaptive(132.dp), verticalArrangement = Arrangement.spacedBy(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    gridItems(state.entries, key = { it.id }) { entry ->
-                        FileGridItem(entry, state.selected.contains(entry.id), onClick = { if (state.selected.isNotEmpty()) viewModel.toggleSelection(entry) else if (entry.isDirectory) viewModel.open(entry) }, onLongClick = { viewModel.toggleSelection(entry) })
+                    gridItems(visibleEntries, key = { it.id }) { entry ->
+                        FileGridItem(
+                            entry,
+                            state.selected.contains(entry.id),
+                            onClick = {
+                                if (state.selected.isNotEmpty()) viewModel.toggleSelection(entry)
+                                else if (entry.isDirectory) viewModel.open(entry)
+                                else if (isVideoEntry(entry) && entry.storage != StorageKind.SHIZUKU) onOpenVideoFile(entry)
+                                else viewModel.toggleSelection(entry)
+                            },
+                            onLongClick = { viewModel.toggleSelection(entry) }
+                        )
                     }
                 }
                 else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(state.entries, key = { it.id }) { entry ->
-                        FileListItem(entry, state.selected.contains(entry.id), onClick = { if (state.selected.isNotEmpty()) viewModel.toggleSelection(entry) else if (entry.isDirectory) viewModel.open(entry) }, onLongClick = { viewModel.toggleSelection(entry) })
+                    items(visibleEntries, key = { it.id }) { entry ->
+                        FileListItem(
+                            entry,
+                            state.selected.contains(entry.id),
+                            onClick = {
+                                if (state.selected.isNotEmpty()) viewModel.toggleSelection(entry)
+                                else if (entry.isDirectory) viewModel.open(entry)
+                                else if (isVideoEntry(entry) && entry.storage != StorageKind.SHIZUKU) onOpenVideoFile(entry)
+                                else viewModel.toggleSelection(entry)
+                            },
+                            onLongClick = { viewModel.toggleSelection(entry) }
+                        )
                     }
                 }
             }
@@ -296,7 +388,15 @@ private fun FileGridItem(entry: BrowserEntry, selected: Boolean, onClick: () -> 
 }
 
 @Composable
-private fun SelectionBar(count: Int, onCopy: () -> Unit, onMove: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit, onClear: () -> Unit) {
+private fun SelectionBar(
+    count: Int,
+    onCopy: () -> Unit,
+    onMove: () -> Unit,
+    onRename: () -> Unit,
+    onInfo: () -> Unit,
+    onDelete: () -> Unit,
+    onClear: () -> Unit
+) {
     Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -309,7 +409,8 @@ private fun SelectionBar(count: Int, onCopy: () -> Unit, onMove: () -> Unit, onR
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 OutlinedButton(onClick = onRename, enabled = count == 1, modifier = Modifier.weight(1f)) { Text("Rename") }
-                OutlinedButton(onClick = onDelete, modifier = Modifier.weight(1f)) { Icon(Icons.Outlined.DeleteOutline, contentDescription = null); Spacer(Modifier.width(6.dp)); Text("Delete") }
+                OutlinedButton(onClick = onInfo, enabled = count == 1, modifier = Modifier.weight(1f)) { Icon(Icons.Outlined.Info, null); Spacer(Modifier.width(5.dp)); Text("Info") }
+                OutlinedButton(onClick = onDelete, modifier = Modifier.weight(1f)) { Icon(Icons.Outlined.DeleteOutline, null); Spacer(Modifier.width(5.dp)); Text("Delete") }
             }
         }
     }
@@ -333,7 +434,7 @@ private fun DestinationChooser(
             IconButton(onClick = if (state.destinationStack.size > 1) onUp else onCancel) { Icon(Icons.Outlined.ArrowBack, contentDescription = "Back") }
             Column(Modifier.weight(1f)) {
                 Text(if (state.destinationMode == ManualOperation.MOVE) "Choose move destination" else "Choose copy destination", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
-                Text("No automatic destination is used.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("You choose the exact destination folder.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
 
@@ -353,8 +454,7 @@ private fun DestinationChooser(
             }
             Spacer(Modifier.weight(1f))
             OutlinedButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
-            return
-        }
+        } else {
 
         Text(state.destinationCurrent?.label ?: "Destination", fontWeight = FontWeight.ExtraBold)
         Text("If the same name exists:", style = MaterialTheme.typography.labelLarge)
@@ -374,8 +474,9 @@ private fun DestinationChooser(
                 }
             }
         }
-        Text("Current folder is the destination. MOVE uses Copy → Verify → Delay → Revalidate → Source Delete.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("MOVE safety: Copy → Verify → Delay → Revalidate → Source Delete.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Button(onClick = onConfirm, modifier = Modifier.fillMaxWidth()) { Text(if (state.destinationMode == ManualOperation.MOVE) "Move here safely" else "Copy here") }
+        }
     }
 }
 
@@ -391,12 +492,77 @@ private fun NameDialog(title: String, label: String, onDismiss: () -> Unit, onCo
     )
 }
 
+@Composable
+private fun PropertiesDialog(item: BrowserEntry, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Properties", fontWeight = FontWeight.ExtraBold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(item.name, fontWeight = FontWeight.Bold)
+                Text("Type: ${if (item.isDirectory) "Folder" else fileTypeLabel(item)}")
+                if (!item.isDirectory) Text("Size: ${humanBytesLocal(item.size)} (${item.size} bytes)")
+                if (item.modified > 0L) Text("Modified: ${formatDate(item.modified)}")
+                Text("Storage: ${when (item.storage) { StorageKind.PHONE -> "Phone"; StorageKind.USB -> "USB / SSD"; StorageKind.SHIZUKU -> "Restricted • Shizuku" }}")
+                Text("Location: ${item.id}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } }
+    )
+}
+
+private fun fileComparator(sort: FileSort): Comparator<BrowserEntry> {
+    val folderFirst = compareBy<BrowserEntry> { !it.isDirectory }
+    val secondary = when (sort) {
+        FileSort.NAME -> compareBy<BrowserEntry> { it.name.lowercase(Locale.US) }
+        FileSort.DATE -> compareByDescending<BrowserEntry> { it.modified }
+        FileSort.SIZE -> compareByDescending<BrowserEntry> { it.size }
+        FileSort.TYPE -> compareBy<BrowserEntry> { extensionOf(it.name) }.thenBy { it.name.lowercase(Locale.US) }
+    }
+    return folderFirst.then(secondary)
+}
+
+private fun matchesCategory(entry: BrowserEntry, category: FileCategory): Boolean {
+    if (category == FileCategory.ALL) return true
+    if (category == FileCategory.FOLDERS) return entry.isDirectory
+    if (entry.isDirectory) return false
+    val ext = extensionOf(entry.name)
+    return when (category) {
+        FileCategory.VIDEO -> ext in setOf("mp4", "mkv", "mov", "webm", "avi", "m4v", "3gp", "ts")
+        FileCategory.IMAGE -> ext in setOf("jpg", "jpeg", "png", "webp", "gif", "heic", "bmp")
+        FileCategory.AUDIO -> ext in setOf("mp3", "m4a", "aac", "wav", "flac", "ogg", "opus")
+        FileCategory.DOCUMENT -> ext in setOf("pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "zip", "rar", "7z", "apk")
+        else -> false
+    }
+}
+
+private fun categoryLabel(category: FileCategory): String = when (category) {
+    FileCategory.ALL -> "All"
+    FileCategory.FOLDERS -> "Folders"
+    FileCategory.VIDEO -> "Videos"
+    FileCategory.IMAGE -> "Images"
+    FileCategory.AUDIO -> "Audio"
+    FileCategory.DOCUMENT -> "Documents"
+}
+
+private fun sortLabel(sort: FileSort): String = when (sort) {
+    FileSort.NAME -> "Sort by name"
+    FileSort.DATE -> "Sort by newest"
+    FileSort.SIZE -> "Sort by size"
+    FileSort.TYPE -> "Sort by type"
+}
+
+private fun isVideoEntry(item: BrowserEntry): Boolean = extensionOf(item.name) in setOf("mp4", "mkv", "mov", "webm", "avi", "m4v", "3gp", "ts")
+
+private fun fileTypeLabel(item: BrowserEntry): String = extensionOf(item.name).uppercase(Locale.US).ifBlank { item.mimeType ?: "File" }
+private fun extensionOf(name: String): String = name.substringAfterLast('.', "").lowercase(Locale.US)
+
 private fun humanBytesLocal(bytes: Long): String {
     if (bytes <= 0) return "0 B"
     val units = arrayOf("B", "KB", "MB", "GB", "TB")
     val group = (ln(bytes.toDouble()) / ln(1024.0)).toInt().coerceIn(0, units.lastIndex)
     val value = bytes / 1024.0.pow(group.toDouble())
-    return if (group == 0) "$bytes B" else String.format(java.util.Locale.US, "%.1f %s", value, units[group])
+    return if (group == 0) "$bytes B" else String.format(Locale.US, "%.1f %s", value, units[group])
 }
 
 private fun formatDate(ms: Long): String = if (ms <= 0L) "" else DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(ms))

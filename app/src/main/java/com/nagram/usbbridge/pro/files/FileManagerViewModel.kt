@@ -117,6 +117,13 @@ class FileManagerViewModel(app: Application) : AndroidViewModel(app) {
         refresh()
     }
 
+    fun jumpTo(index: Int) {
+        val stack = _state.value.stack
+        if (index !in stack.indices) return
+        _state.value = _state.value.copy(stack = stack.take(index + 1), selected = emptySet())
+        refresh()
+    }
+
     fun toggleSelection(entry: BrowserEntry) {
         val set = _state.value.selected.toMutableSet()
         if (!set.add(entry.id)) set.remove(entry.id)

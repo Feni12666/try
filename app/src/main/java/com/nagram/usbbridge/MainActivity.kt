@@ -19,11 +19,13 @@ import com.nagram.usbbridge.pro.files.FileManagerViewModel
 import com.nagram.usbbridge.pro.ui.MainViewModel
 import com.nagram.usbbridge.pro.ui.ShahadatProApp
 import com.nagram.usbbridge.pro.ui.theme.ShahadatProTheme
+import com.nagram.usbbridge.pro.video.VideoLibraryViewModel
 import rikka.shizuku.Shizuku
 
 class MainActivity : ComponentActivity() {
     private val prefs by lazy { getSharedPreferences("bridge", MODE_PRIVATE) }
     private var onUsbChanged: (() -> Unit)? = null
+    private var onVideoAccessChanged: (() -> Unit)? = null
     private val shizukuPermissionListener = Shizuku.OnRequestPermissionResultListener { _, _ ->
         onUsbChanged?.invoke()
     }
@@ -38,6 +40,7 @@ class MainActivity : ComponentActivity() {
             prefs.edit().putString("tree_uri", uri.toString()).apply()
             Toast.makeText(this, "USB / SSD folder saved ✓", Toast.LENGTH_SHORT).show()
             onUsbChanged?.invoke()
+            onVideoAccessChanged?.invoke()
         } catch (t: Throwable) {
             Toast.makeText(this, "USB permission could not be saved: ${t.message}", Toast.LENGTH_LONG).show()
         }
@@ -46,6 +49,12 @@ class MainActivity : ComponentActivity() {
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { }
+
+    private val videoPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) {
+        onVideoAccessChanged?.invoke()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -72,20 +81,24 @@ class MainActivity : ComponentActivity() {
         setContent {
             val mainVm: MainViewModel = viewModel()
             val filesVm: FileManagerViewModel = viewModel()
+            val videosVm: VideoLibraryViewModel = viewModel()
             val mainState by mainVm.state.collectAsStateWithLifecycle()
             onUsbChanged = {
                 mainVm.refreshNow()
                 filesVm.refreshPermissionsAndStorage()
             }
+            onVideoAccessChanged = { videosVm.refresh() }
 
             ShahadatProTheme(mainState.themeMode) {
                 ShahadatProApp(
                     viewModel = mainVm,
                     fileManagerViewModel = filesVm,
+                    videoLibraryViewModel = videosVm,
                     distribution = BuildConfig.DISTRIBUTION,
                     onChooseUsb = { usbTreeLauncher.launch(null) },
                     onRequestShizuku = { requestShizukuPermission(); mainVm.refreshNow() },
                     onRequestPhoneAccess = { requestPhoneStorageAccess() },
+                    onRequestVideoAccess = { requestVideoPermission() },
                     onOpenAppSettings = { openAppSettings() }
                 )
             }
@@ -126,6 +139,19 @@ class MainActivity : ComponentActivity() {
                     Uri.parse("package:$packageName")
                 )
             )
+        }
+    }
+
+
+    private fun requestVideoPermission() {
+        val permission = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_VIDEO else Manifest.permission.READ_EXTERNAL_STORAGE
+        if (ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED ||
+            (Build.VERSION.SDK_INT >= 30 && android.os.Environment.isExternalStorageManager())
+        ) {
+            onVideoAccessChanged?.invoke()
+            Toast.makeText(this, "Video access ready ✓", Toast.LENGTH_SHORT).show()
+        } else {
+            videoPermissionLauncher.launch(permission)
         }
     }
 
