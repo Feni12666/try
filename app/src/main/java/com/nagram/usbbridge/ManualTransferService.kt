@@ -531,22 +531,24 @@ class ManualTransferService : Service() {
         }
     }
 
-    private fun createDestinationFile(dest: DestSpec, name: String, mime: String): DestEntry? = when (dest.kind) {
-        StorageKind.PHONE -> {
-            val file = File(dest.id, name)
-            file.parentFile?.mkdirs()
-            if (!file.createNewFile()) return null
-            DestEntry(StorageKind.PHONE, file.absolutePath, file.name, false, 0L)
-        }
-        StorageKind.USB -> {
-            val parent = destinationDocument(dest) ?: return null
-            val doc = parent.createFile(mime, name) ?: return null
-            DestEntry(StorageKind.USB, doc.uri.toString(), doc.name ?: name, false, 0L)
-        }
-        StorageKind.SHIZUKU -> {
-            val service = RestrictedShizukuClient.get() ?: return null
-            val path = service.createFile(dest.id, name) ?: return null
-            DestEntry(StorageKind.SHIZUKU, path, name, false, 0L)
+    private fun createDestinationFile(dest: DestSpec, name: String, mime: String): DestEntry? {
+        return when (dest.kind) {
+            StorageKind.PHONE -> {
+                val file = File(dest.id, name)
+                file.parentFile?.mkdirs()
+                if (!file.createNewFile()) return null
+                DestEntry(StorageKind.PHONE, file.absolutePath, file.name, false, 0L)
+            }
+            StorageKind.USB -> {
+                val parent = destinationDocument(dest) ?: return null
+                val doc = parent.createFile(mime, name) ?: return null
+                DestEntry(StorageKind.USB, doc.uri.toString(), doc.name ?: name, false, 0L)
+            }
+            StorageKind.SHIZUKU -> {
+                val service = RestrictedShizukuClient.get() ?: return null
+                val path = service.createFile(dest.id, name) ?: return null
+                DestEntry(StorageKind.SHIZUKU, path, name, false, 0L)
+            }
         }
     }
 
