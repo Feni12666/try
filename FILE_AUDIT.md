@@ -1,39 +1,26 @@
-# File-by-file audit summary
+# File Audit — Manual File Manager Alpha 03
 
-## Build / CI
-- `build.gradle` — Android/Kotlin plugin versions retained.
-- `settings.gradle` — repositories/module structure retained.
-- `app/build.gradle` — version bumped to 17 / `4.0.0-alpha02-bluewhite`; Compose icons dependency added; Direct/Play flavors retained.
-- `.github/workflows/build-apk.yml` — permanent signing restore retained; artifact renamed for BlueWhite test build.
-- `gradle.properties` — AndroidX compatibility retained.
+## Active app entry / UI
+- `MainActivity.kt` — permission launchers, SAF root selection, theme host, no auto watcher start.
+- `ShahadatProApp.kt` — splash, Home, Videos/Duplicates/Sync shell, settings.
+- `ManualFilesScreen.kt` — real Phone/USB/Shizuku file browser and destination chooser.
+- `Theme.kt` — blue/white light theme + dark + AMOLED + System.
 
-## App entry / UI
-- `MainActivity.kt` — legacy data namespace preserved; default cleanup 3 min; duplicate guard forced on; configured parallel transfers set to 2.
-- `ShahadatProApp.kt` — rebuilt to approved Design #8; animated personal splash; no personal name after splash; Home/Files/Videos/Duplicates/Sync; Phone/USB switch; duplicate compare layout; Shizuku/Sync screen; cleanup 1/3/5 selector.
-- `Theme.kt` — old dark/neon palette replaced with premium blue + white Material 3 palette.
-- `MainViewModel.kt` — exposes active/ready queue, safe mode and cleanup-delay state; persists delay selection.
-- `strings.xml` / Manifest — normal app label changed to neutral `Video & Storage Pro`; personal name remains splash-only.
+## Manual file engine
+- `FileBrowserModels.kt` — storage/file/operation models.
+- `FileManagerRepository.kt` — Phone, USB SAF and Shizuku file operations.
+- `FileManagerViewModel.kt` — browsing, selection, manual destination flow and operation controls.
+- `ManualTransferService.kt` — 2-worker foreground copy/move engine, verification, cleanup delay, progress notification.
 
-## Existing transfer safety core
-- `BridgeService.java` — audited and upgraded to 2 active workers + 10 prepared queue, automatic 1-worker safe fallback, same-content concurrent lock, existing verification/cleanup revalidation retained.
-- `BridgeDatabase.java` — synchronized legacy safety journal retained.
-- `FingerprintUtils.java` — sampled SHA-256 quick fingerprint + full SHA-256 candidate confirmation retained.
-- `DocumentTreeUtils.java` — SAF document safety helpers retained.
-- `StorageUtils.java` — USB space/filesystem preflight retained.
-- `NagramPrivilegedService.java` / AIDL — Shizuku protected-source access retained.
-- `BootReceiver.java` — recovery hook retained.
-- `BridgeSnapshotReader.kt` — history/stat snapshot bridge retained.
+## Shizuku restricted access
+- `IRestrictedFileService.aidl`
+- `RestrictedFileService.java`
+- `RestrictedShizukuClient.kt`
 
-## New architecture foundation
-- `ProDatabase.kt`, `MediaIndexEntity.kt`, `MediaIndexDao.kt`, `Repositories.kt` — Room media/duplicate-cache foundation retained.
-- `ReconcileWorker.kt`, `WorkScheduler.kt`, `TransferServiceFacade.kt` — WorkManager + foreground transfer hybrid retained.
-- `ShahadatProApplication.kt` — Room repository application scope retained.
+Restricted service is constrained to `/storage/emulated/0/Android/data` and `/storage/emulated/0/Android/obb`.
 
-## Static checks completed
-- All Android XML resources parse successfully.
-- Personal-name search in app source finds `SHAHADAT` only in the splash composable.
-- Obsolete single-transfer symbols are absent from BridgeService.
-- Invalid Compose `layout.weight` import is absent.
-- Version and queue constants verified.
+## Legacy fixed automation
+Old `BridgeService`, `BootReceiver`, Nagram-only privileged service and Nagram AIDL are removed from this source and are not registered in the manifest.
 
-Actual Android compilation still requires the GitHub Actions Android toolchain.
+## Persistent compatibility
+Legacy Room/SQLite/cache classes retained where they do not start automation, to avoid unnecessary migration breakage during the project transition.

@@ -1,15 +1,19 @@
 package com.nagram.usbbridge.pro.ui.theme
 
+import android.app.Activity
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
 
-/**
- * Final Design #8 direction: premium blue + white, clean surfaces, restrained accent use.
- * The app intentionally stays light/bright for this milestone so the approved visual language
- * remains consistent across devices instead of being replaced by a dark/neon fallback.
- */
+enum class AppThemeMode { SYSTEM, LIGHT, DARK, AMOLED }
+
 private val ProBlueWhite = lightColorScheme(
     primary = Color(0xFF2563EB),
     onPrimary = Color.White,
@@ -29,15 +33,59 @@ private val ProBlueWhite = lightColorScheme(
     outline = Color(0xFFD8E2F1),
     outlineVariant = Color(0xFFE7EDF7),
     error = Color(0xFFDC2626),
-    onError = Color.White,
-    errorContainer = Color(0xFFFFE8E8),
-    onErrorContainer = Color(0xFF7F1D1D)
+    onError = Color.White
+)
+
+private val ProDark = darkColorScheme(
+    primary = Color(0xFF77A7FF),
+    onPrimary = Color(0xFF002F69),
+    primaryContainer = Color(0xFF123A70),
+    onPrimaryContainer = Color(0xFFD9E6FF),
+    secondary = Color(0xFF74D1FF),
+    onSecondary = Color(0xFF003548),
+    background = Color(0xFF0E1420),
+    onBackground = Color(0xFFF3F6FC),
+    surface = Color(0xFF151D2A),
+    onSurface = Color(0xFFF3F6FC),
+    surfaceVariant = Color(0xFF202B3B),
+    onSurfaceVariant = Color(0xFFB6C2D2),
+    outline = Color(0xFF43536A),
+    error = Color(0xFFFFB4AB),
+    onError = Color(0xFF690005)
+)
+
+private val ProAmoled = ProDark.copy(
+    background = Color.Black,
+    surface = Color(0xFF090D13),
+    surfaceVariant = Color(0xFF111824)
 )
 
 @Composable
-fun ShahadatProTheme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = ProBlueWhite,
-        content = content
-    )
+fun ShahadatProTheme(mode: AppThemeMode, content: @Composable () -> Unit) {
+    val systemDark = isSystemInDarkTheme()
+    val dark = when (mode) {
+        AppThemeMode.SYSTEM -> systemDark
+        AppThemeMode.LIGHT -> false
+        AppThemeMode.DARK, AppThemeMode.AMOLED -> true
+    }
+    val colors = when {
+        mode == AppThemeMode.AMOLED -> ProAmoled
+        dark -> ProDark
+        else -> ProBlueWhite
+    }
+
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        SideEffect {
+            val window = (view.context as? Activity)?.window ?: return@SideEffect
+            window.statusBarColor = colors.background.toArgb()
+            window.navigationBarColor = colors.surface.toArgb()
+            WindowCompat.getInsetsController(window, view).apply {
+                isAppearanceLightStatusBars = !dark
+                isAppearanceLightNavigationBars = !dark
+            }
+        }
+    }
+
+    MaterialTheme(colorScheme = colors, content = content)
 }

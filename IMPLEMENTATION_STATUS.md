@@ -1,28 +1,24 @@
-# Implementation status — 4.0.0-alpha02-bluewhite
+# Implementation Status — Manual File Manager V2
 
 ## Implemented in this test source
-- Kotlin + Jetpack Compose + Material 3 foundation.
-- Premium blue/white Design #8 shell.
-- Animated personal splash; personal name is not displayed after splash.
-- Home / Files / Videos / Duplicates / Sync navigation.
-- Clear Phone vs USB/SSD switching UI.
-- Shizuku + SAF USB connection controls.
-- Existing proven transfer journal and protected Nagram source service.
-- 2 active transfer workers + up to 10 prepared files.
-- Automatic 1-worker Safe Mode after repeated safety failures.
-- 2-second scan cycle and stable-download completion gate.
-- Same-video duplicate guard with quick fingerprint + candidate-only SHA-256.
-- Concurrency guard preventing matching content candidates from being written simultaneously.
-- Temporary destination, verification, finalization, cleanup revalidation.
-- Cleanup Delay selector: 1 / 3 / 5 minutes; default 3.
-- Room media-index foundation and WorkManager reconciliation foundation.
-- Permanent signing-compatible GitHub Actions workflow.
+- Blue/white premium Material 3 shell with dark/System/AMOLED modes.
+- Splash-only SHAHADAT branding and photo.
+- Mobile-safe 5-tab bottom navigation.
+- Real Phone shared-storage browser (Direct flavor / All Files Access).
+- Real USB/SSD SAF tree browser.
+- Optional Shizuku browser for Android/data and Android/obb, including manual copy/move/rename/delete/create-folder when Shizuku is connected.
+- Folder navigation, List/Grid view, hidden-file toggle.
+- Multi-select, Create Folder, Rename, Delete.
+- Manual Copy / Move with an in-app destination chooser; no default destination.
+- Keep Both / Replace / Skip conflict choices.
+- Foreground manual transfer service with 2 active tasks, progress, speed, ETA, Pause/Resume/Cancel notification actions.
+- Move safety: temporary copy, SHA-256 verification, cleanup delay selector (1/3/5, default 3), final destination revalidation, then source delete.
+- Content duplicate protection for same-size destination candidates using SHA-256; confirmed same content is skipped.
+- Legacy Nagram watcher and boot auto-copy disabled and not registered.
 
-## Subsequent feature milestones
-- Full recursive file-manager operations and final file browser.
-- MediaStore/USB video indexing and full All Video Folders.
-- Media3 production player.
-- Exact-duplicate scan UI backed by real duplicate groups and manual actions.
-- Similar-video frame-fingerprint engine.
-- Generic source-folder Smart Sync beyond the current protected Nagram source.
-- Full notification Pause/Resume/Cancel actions, QA and Play Store release packaging.
+## Planned later milestones
+- All Video Folders indexing.
+- Media3 in-app player and gestures.
+- Full Exact Duplicate group scanner with duration + quick fingerprint cache + comparison UI.
+- Similar Video frame-fingerprint deep scan.
+- User-created optional Auto-Sync rules (source and target selected by user, OFF by default).
