@@ -24,6 +24,7 @@ sealed class AppDestination(
     data object Shizuku : AppDestination("shizuku", R.string.shizuku_title, null)
 
     companion object {
-        val bottomNavigation = listOf(Home, Files, Videos, Duplicates, Transfer)
+        val bottomNavigation: List<AppDestination>
+            get() = listOf(Home, Files, Videos, Duplicates, Transfer)
     }
 }
