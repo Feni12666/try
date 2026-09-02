@@ -103,7 +103,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(storageLocation = StorageLocation.PHONE, browserOrigin = origin, browserNotice = null) }; loadCurrentDirectory()
     }
     fun openEntry(id: String, label: String, isDirectory: Boolean) { if (!isDirectory) return; val origin = uiState.value.browserOrigin; stacks.getValue(origin) += BrowserPoint(id, label); loadCurrentDirectory() }
-    fun navigateUp() { val stack = stacks.getValue(uiState.value.browserOrigin); if (stack.isNotEmpty()) { stack.removeLast(); loadCurrentDirectory() } }
+    fun navigateUp() { val stack = stacks.getValue(uiState.value.browserOrigin); if (stack.isNotEmpty()) { stack.removeAt(stack.lastIndex); loadCurrentDirectory() } }
     fun setAutoSync(enabled: Boolean) = updateSync { it.copy(enabled = enabled) }
     fun setOnlyNewFiles(enabled: Boolean) = updateSync { it.copy(onlyNewFiles = enabled) }
     fun setVerifyAfterCopy(enabled: Boolean) = updateSync { it.copy(verifyAfterCopy = enabled) }
