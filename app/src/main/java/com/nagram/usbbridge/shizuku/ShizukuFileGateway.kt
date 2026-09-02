@@ -24,7 +24,7 @@ class ShizukuFileGateway(context: Context) {
     private var service: IShizukuFileService? = null
     private var binding = false
     private val args = Shizuku.UserServiceArgs(ComponentName(appContext.packageName, ShizukuFileUserService::class.java.name))
-        .daemon().processNameSuffix("usb-video-files").debuggable(BuildConfig.DEBUG).version(1).tag("usb-video-manager-protected-read")
+        .daemon(false).processNameSuffix("usb-video-files").debuggable(BuildConfig.DEBUG).version(1).tag("usb-video-manager-protected-read")
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
             service = IShizukuFileService.Stub.asInterface(binder); binding = false
