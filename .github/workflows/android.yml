@@ -33,11 +33,11 @@ jobs:
         uses: gradle/actions/setup-gradle@v5
 
       - name: Verify app source and build debug APK
-        run: ./gradlew testDebugUnitTest lintDebug assembleDebug --stacktrace
+        run: ./gradlew testDirectDebugUnitTest lintDirectDebug assembleDirectDebug --stacktrace
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v5
         with:
-          name: usb-video-manager-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: usb-video-manager-direct-debug
+          path: app/build/outputs/apk/direct/debug/app-direct-debug.apk
           if-no-files-found: error
