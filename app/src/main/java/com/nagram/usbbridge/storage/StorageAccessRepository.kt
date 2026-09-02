@@ -68,8 +68,13 @@ class StorageAccessRepository(private val context: Context) {
         val root = usbFolder() ?: error("Choose a USB or pendrive folder first.")
         check(isUsbGrantUsable()) { "The USB permission is no longer available." }
         val uri = Uri.parse(uriString ?: root.uri)
-        val directory = if (uri.toString() == root.uri) DocumentFile.fromTreeUri(context, uri) else DocumentFile.fromSingleUri(context, uri)
-            ?: error("The selected USB folder is no longer available.")
+        val directory = (
+            if (uri.toString() == root.uri) {
+                DocumentFile.fromTreeUri(context, uri)
+            } else {
+                DocumentFile.fromSingleUri(context, uri)
+            }
+        ) ?: error("The selected USB folder is no longer available.")
         require(directory.isDirectory) { "The selected USB location is not a folder." }
         return StorageListing(StorageLocation.USB, if (uriString == null) root.label else directory.name ?: root.label,
             directory.listFiles().sortedWith(compareByDescending<DocumentFile> { it.isDirectory }.thenBy { it.name.orEmpty().lowercase(Locale.ROOT) }).map(::documentEntry))

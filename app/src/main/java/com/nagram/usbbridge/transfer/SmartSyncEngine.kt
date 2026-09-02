@@ -203,8 +203,11 @@ class SmartSyncEngine(private val context: Context) {
     private fun mimeFor(name: String): String = MimeTypeMap.getSingleton()
         .getMimeTypeFromExtension(name.substringAfterLast('.', "").lowercase(Locale.ROOT)) ?: "video/*"
 
-    private fun isVideo(name: String?, mime: String?): Boolean = mime?.startsWith("video/") == true ||
-        name?.substringAfterLast('.', "").lowercase(Locale.ROOT) in VIDEO_EXTENSIONS
+    private fun isVideo(name: String?, mime: String?): Boolean =
+        mime?.startsWith("video/") == true ||
+            name?.substringAfterLast('.', "")
+                ?.lowercase(Locale.ROOT)
+                ?.let { it in VIDEO_EXTENSIONS } == true
 
     private suspend fun sha256(input: InputStream, total: Long, onBytes: (Long) -> Unit): String =
         BufferedInputStream(input).use { stream ->
