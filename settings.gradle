@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "UsbVideoManager"
-include(":app")
+rootProject.name = "ShahadatManageFile10"
+include ':app'

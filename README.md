@@ -1,47 +1,49 @@
-# USB Video Manager
+# Shahadat Manage File — 10 independent Android apps
 
-Native Android application for safely browsing phone and USB storage,
-reviewing duplicate videos, previewing media and synchronizing only new files.
+This project builds 10 separate APKs from one codebase.
 
-## Current delivery
+Apps:
+- Shahadat Manage File 01 → `com.shahadat.managefile.clone01`
+- Shahadat Manage File 02 → `com.shahadat.managefile.clone02`
+- Shahadat Manage File 03 → `com.shahadat.managefile.clone03`
+- Shahadat Manage File 04 → `com.shahadat.managefile.clone04`
+- Shahadat Manage File 05 → `com.shahadat.managefile.clone05`
+- Shahadat Manage File 06 → `com.shahadat.managefile.clone06`
+- Shahadat Manage File 07 → `com.shahadat.managefile.clone07`
+- Shahadat Manage File 08 → `com.shahadat.managefile.clone08`
+- Shahadat Manage File 09 → `com.shahadat.managefile.clone09`
+- Shahadat Manage File 10 → `com.shahadat.managefile.clone10`
 
-Phase 0, Phase 1 and the Phase 2 storage-access foundation:
+Each installs independently and has its own Android app-data sandbox.
 
-- Kotlin + Jetpack Compose + Material 3
-- Android 11 minimum (`minSdk 30`)
-- Android API 37 compile/target baseline
-- Premium light/dark UI and English/Bangla resources
-- Home, Files, Videos, Duplicates, Smart Auto-Sync, Player and Shizuku screens
-- Working navigation and persisted UI state
-- Real Phone shared-storage browser after the user grants All files access
-- User-selected USB/OTG SAF tree permission, persisted across app restarts
-- Clear Phone / USB switch and real folder listing/navigation
-- Optional Shizuku user service for read-only `Android/data` and `Android/obb` browsing
-- User-selected Smart Auto-Sync source and target route, persisted across restarts
-- One-tap Smart Sync for selected SAF folders and optional Shizuku protected
-  folders: scans videos recursively, skips byte-identical copies using SHA-256,
-  copies through a temporary file, and verifies the destination SHA-256 again
-- Duplicate keep-policy unit tests
-- CI build, lint and debug APK artifact
-- Manual copy/move destination selection is a fixed safety requirement
+## Current feature
+A basic Storage Access Framework folder browser:
+- Choose a folder using Android's system picker
+- Remember folder permission
+- List first-level files and folders
+- Show file sizes
 
-The Smart Sync engine never deletes a source file. Manual copy/move, rename,
-delete, duplicate scanning and in-app playback remain separate planned work.
-Shizuku access is read-only by design; it never writes to protected Android
-folders.
+## GitHub Actions build
+Push the project to a GitHub repository. The included workflow builds all 10 debug APKs and uploads one artifact named:
 
-## Build
+`Shahadat-Manage-File-10-APKs`
 
-Requirements:
-
-- JDK 17
-- Android SDK Platform 37.0
-- Android SDK Build Tools 36.0.0
-
+## Termux upload example
 ```bash
-./gradlew testDebugUnitTest lintDebug assembleDebug
+cd /storage/emulated/0/Download/ShahadatManageFile_10Apps
+git init
+git add .
+git commit -m "Initial 10 app build"
+git branch -M main
+git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO.git
+git push -u origin main
 ```
 
-The debug APK is generated at `app/build/outputs/apk/debug/app-debug.apk`.
+Then check the Actions tab or with GitHub CLI:
 
-See `docs/ARCHITECTURE.md`, `docs/UI_SPEC.md` and `docs/PHASE_STATUS.md`.
+```bash
+gh run list --repo YOUR_USERNAME/YOUR_REPO --limit 5
+gh run watch --repo YOUR_USERNAME/YOUR_REPO
+```
+
+Important: this is a clean independent project. It is not Facebook Lite and does not copy Facebook's code, login system, or services.

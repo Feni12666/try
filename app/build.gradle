@@ -1,0 +1,40 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.shahadat.managefile'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.shahadat.managefile'
+        minSdk 23
+        targetSdk 35
+        versionCode 1
+        versionName '1.0'
+    }
+
+    flavorDimensions += 'clone'
+
+    productFlavors {
+        clone01 { dimension 'clone'; applicationId 'com.shahadat.managefile.clone01'; resValue 'string', 'app_name', 'Shahadat Manage File 01' }
+        clone02 { dimension 'clone'; applicationId 'com.shahadat.managefile.clone02'; resValue 'string', 'app_name', 'Shahadat Manage File 02' }
+        clone03 { dimension 'clone'; applicationId 'com.shahadat.managefile.clone03'; resValue 'string', 'app_name', 'Shahadat Manage File 03' }
+        clone04 { dimension 'clone'; applicationId 'com.shahadat.managefile.clone04'; resValue 'string', 'app_name', 'Shahadat Manage File 04' }
+        clone05 { dimension 'clone'; applicationId 'com.shahadat.managefile.clone05'; resValue 'string', 'app_name', 'Shahadat Manage File 05' }
+        clone06 { dimension 'clone'; applicationId 'com.shahadat.managefile.clone06'; resValue 'string', 'app_name', 'Shahadat Manage File 06' }
+        clone07 { dimension 'clone'; applicationId 'com.shahadat.managefile.clone07'; resValue 'string', 'app_name', 'Shahadat Manage File 07' }
+        clone08 { dimension 'clone'; applicationId 'com.shahadat.managefile.clone08'; resValue 'string', 'app_name', 'Shahadat Manage File 08' }
+        clone09 { dimension 'clone'; applicationId 'com.shahadat.managefile.clone09'; resValue 'string', 'app_name', 'Shahadat Manage File 09' }
+        clone10 { dimension 'clone'; applicationId 'com.shahadat.managefile.clone10'; resValue 'string', 'app_name', 'Shahadat Manage File 10' }
+    }
+
+    buildTypes {
+        debug {
+            minifyEnabled false
+        }
+        release {
+            minifyEnabled false
+        }
+    }
+}
